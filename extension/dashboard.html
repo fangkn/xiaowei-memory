@@ -10,9 +10,9 @@
 <body>
 <main id="backupPanel">
   <header class="panel-header">
-    <div class="brand"><img class="brand-logo" src="icons/logo.svg" width="20" height="20" alt="" aria-hidden="true"><span>小微记忆</span><span class="version">v0.7.3</span></div>
+    <div class="brand"><img class="brand-logo" src="icons/logo.svg" width="20" height="20" alt="" aria-hidden="true"><span>小微记忆</span><span class="version">v0.7.4</span></div>
     <div class="window-actions">
-      <button id="panelHelp" class="icon-button" type="button" aria-label="使用帮助" aria-controls="helpPanel" aria-expanded="false" title="使用帮助"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9a2.5 2.5 0 0 1 5 .2c0 1.8-2.5 2-2.5 3.8M12 16.5v.1"/></svg></button>
+      <a id="panelHelp" class="icon-button" href="https://github.com/fangkn/xiaowei-memory" target="_blank" rel="noopener noreferrer" aria-label="打开小微记忆 GitHub 项目（新标签页）" title="项目主页与使用帮助（新标签页）"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9a2.5 2.5 0 0 1 5 .2c0 1.8-2.5 2-2.5 3.8M12 16.5v.1"/></svg></a>
       <button id="panelMinimize" class="icon-button" type="button" aria-label="最小化备份面板" title="最小化，任务继续运行"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12h12"/></svg></button>
       <button id="panelClose" class="icon-button close-button" type="button" aria-label="关闭备份面板" aria-controls="closePrompt" title="关闭面板"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
     </div>
@@ -25,13 +25,6 @@
       <div class="close-actions"><button id="closeMinimize" class="primary" type="button">最小化并继续</button><button id="closeCancel" class="secondary" type="button">取消</button></div>
     </section>
     <p id="panelActionStatus" class="state-note" role="status" aria-live="polite" hidden></p>
-    <aside id="helpPanel" class="help-panel" aria-label="使用帮助" hidden>
-      <strong>按提示，一步一步备份</strong>
-      <p>先在微博个人主页确认账号，再选择备份范围。自动跳过转发，采集后按月生成 PDF。全部月份生成后统一打包为一个 ZIP，解压后每月一份 PDF。</p>
-      <p>「−」最小化后任务继续；「×」在任务结束后关闭面板，点击扩展图标可重新打开。刷新或关闭微博页会中断读取，已保存记录保留。历史任务支持续传。</p>
-      <p>只能保存当前有权访问的内容，不保证全部历史。视频保留原链接，不下载视频、评论或私信。覆盖旧笔记前请保留批注；卸载扩展前请先导出数据。</p>
-    </aside>
-
     <div class="step-heading">
       <div class="step-meta"><span id="stepNumber">01 / 04</span><div class="step-dots" aria-hidden="true"><span data-step-dot="1" class="current"></span><span data-step-dot="2"></span><span data-step-dot="3"></span><span data-step-dot="4"></span></div></div>
       <h1 id="stepTitle" tabindex="-1">先确认你的账号</h1>

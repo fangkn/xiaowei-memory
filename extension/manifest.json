@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "小微记忆",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "自动过滤转发，将原创微博按月保存为 PDF，支持图片和本地 Markdown 归档。",
   "permissions": [
     "activeTab",

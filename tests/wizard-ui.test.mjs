@@ -25,7 +25,6 @@ function uiHarness({embedded = false, windowResponse = {ok:true}} = {}) {
   const dots = [1, 2, 3, 4].map(step => element(`dot-${step}`, {stepDot: String(step)}));
   const radios = ['page', 'history'].map(mode => Object.assign(element(mode), {value: mode}));
   $('batch').value = '2026-11';
-  $('helpPanel').hidden = true;
   $('closePrompt').hidden = true;
   const browserWindow = {scrollTo() {}};
   browserWindow.parent = embedded ? {} : browserWindow;
@@ -71,12 +70,9 @@ test('the wizard shows one stage and distinguishes saved records from a connecte
 test('range selection only reveals the options for the selected mode', () => {
   const {ui, $, sections, radios} = uiHarness();
   ui.setAccount('1234567890', '测试账号');
-  $('panelHelp').click();
-  assert.equal($('helpPanel').hidden, false);
   ui.dispatch({type: 'NEXT'});
   assert.equal(sections.filter(section => !section.hidden).length, 1);
   assert.equal(sections[1].hidden, false);
-  assert.equal($('helpPanel').hidden, true);
   assert.equal($('stepTitle').focusCount, 1);
   assert.equal($('pageOptions').hidden, false);
   assert.equal($('historyOptions').hidden, true);

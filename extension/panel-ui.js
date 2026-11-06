@@ -113,19 +113,12 @@ export function setupPanelUI() {
     state = transitionWizard(state,event);
     render();
     if (oldStep !== state.step) {
-      $('helpPanel').hidden = true;
-      $('panelHelp').setAttribute('aria-expanded','false');
       window.scrollTo({top:0,behavior:'instant'});
       $('stepTitle').focus({preventScroll:true});
     }
     return state;
   }
   for (const radio of document.querySelectorAll('input[name="backupMode"]')) radio.addEventListener('change', () => dispatch({type:'MODE',mode:radio.value}));
-  $('panelHelp').addEventListener('click', () => {
-    $('helpPanel').hidden = !$('helpPanel').hidden;
-    $('panelHelp').setAttribute('aria-expanded',String(!$('helpPanel').hidden));
-    measure();
-  });
   $('panelMinimize').hidden = !embedded;
   $('panelClose').hidden = !embedded;
   $('panelClose').addEventListener('click', () => {

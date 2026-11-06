@@ -39,7 +39,20 @@
 3. 点击「加载已解压的扩展程序」，选择项目内的 **`extension`** 文件夹；这一层应直接包含 `manifest.json`。
 4. 固定扩展图标，登录微博，在自己的个人主页点击「小微记忆」。
 
-安装已有源码不需要运行 npm。需要自行制作安装包时，执行下文构建命令，然后加载 `dist/unpacked`，或解压生成的 `dist/xiaowei-memory-extension.zip` 后加载。
+安装已有源码不需要运行 npm。需要自行制作安装包时，执行下文构建命令。
+
+### Chrome 与 Edge 安装包
+
+运行 `npm run build` 会同时生成两种 ZIP：
+
+| 浏览器 | v0.7.3 安装包 | 可直接加载的目录 | 扩展管理页 |
+| --- | --- | --- | --- |
+| Chrome | `dist/xiaowei-memory-chrome-v0.7.3.zip` | `dist/chrome` | `chrome://extensions` |
+| Edge | `dist/xiaowei-memory-edge-v0.7.3.zip` | `dist/edge` | `edge://extensions` |
+
+本地安装时先解压 ZIP，再进入对应管理页，打开「开发者模式」，选择「加载已解压的扩展程序」并选中包含 `manifest.json` 的目录。两个 ZIP 共用兼容的 Manifest V3 代码，包内根目录直接包含 Manifest，也可用于对应商店提交；生成 ZIP 不代表已经上架或通过商店审核。
+
+通用包 `dist/xiaowei-memory-extension.zip` 和目录 `dist/unpacked` 继续保留。已安装用户升级时保持原加载目录，参见下面的升级说明。
 
 ### 升级已有安装
 
@@ -91,6 +104,15 @@ npm run build
 ```
 
 构建输出位于 `dist/`。通用构建只生成本项目产物，不修改已安装扩展的其他目录。
+
+只打包某一种浏览器时：
+
+```sh
+npm run build:chrome
+npm run build:edge
+```
+
+这两个命令各自生成对应的版本 ZIP、`dist/chrome` 或 `dist/edge` 目录，以及源码 ZIP，不改写另一个浏览器已有的包。CI 的构建产物包含两种浏览器 ZIP。
 
 浏览器 DOM fixture 测试使用锁定的 Playwright 开发依赖：
 

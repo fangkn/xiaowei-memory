@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {archivePath, buildRelease} from '../scripts/build.mjs';
@@ -16,6 +16,7 @@ function fixture(t) {
     writeFileSync(destination, contents);
   };
   for (const name of ['extension/manifest.json', 'extension/vendor/library.js', 'extension/vendor/LICENSE.txt', 'scripts/build.mjs', 'tests/example.test.mjs', 'docs/guide.md', '.github/workflows/ci.yml', 'package.json', 'package-lock.json', 'README.md', 'LICENSE', 'PRIVACY.md', 'SECURITY.md', '.gitignore']) put(name);
+  put('extension/manifest.json', JSON.stringify({manifest_version: 3, name: 'Fixture', version: '1.2.3'}));
   return {workspace, root, put};
 }
 
@@ -76,6 +77,40 @@ test('ordinary build never updates an existing adjacent legacy installation', t 
   writeFileSync(path.join(install, 'manifest.json'), 'EXISTING INSTALLATION');
   buildRelease(root);
   assert.equal(readFileSync(path.join(install, 'manifest.json'), 'utf8'), 'EXISTING INSTALLATION');
+});
+
+test('Chrome and Edge packages contain a root manifest and the same complete runtime', t => {
+  const {root} = fixture(t);
+  const result = buildRelease(root);
+  assert.deepEqual(result.packages, ['xiaowei-memory-chrome-v1.2.3.zip', 'xiaowei-memory-edge-v1.2.3.zip']);
+  const generic = readFileSync(path.join(root, 'dist/xiaowei-memory-extension.zip'));
+  for (const browser of ['chrome', 'edge']) {
+    const bytes = readFileSync(path.join(root, `dist/xiaowei-memory-${browser}-v1.2.3.zip`));
+    assert.deepEqual(bytes, generic);
+    const entries = zipEntries(bytes);
+    const manifest = JSON.parse(entries.get('manifest.json'));
+    assert.equal(manifest.manifest_version, 3);
+    assert.equal(manifest.version, '1.2.3');
+    assert.ok(!entries.has('extension/manifest.json'));
+    for (const [name, data] of entries) assert.deepEqual(readFileSync(path.join(root, 'dist', browser, name)), data);
+    for (const required of ['LICENSE', 'PRIVACY.md', 'SECURITY.md', 'vendor/library.js', 'vendor/LICENSE.txt']) assert.ok(entries.has(required), required);
+  }
+});
+
+test('individual browser builds create only the selected target and reject unsupported targets', t => {
+  const {root} = fixture(t);
+  for (const browser of ['chrome', 'edge']) {
+    const output = path.join(root, `only-${browser}`);
+    const result = buildRelease(root, output, {target: browser});
+    assert.deepEqual(result.packages, [`xiaowei-memory-${browser}-v1.2.3.zip`]);
+    assert.ok(existsSync(path.join(output, browser, 'manifest.json')));
+    const other = browser === 'chrome' ? 'edge' : 'chrome';
+    assert.ok(!existsSync(path.join(output, other)));
+    assert.ok(!existsSync(path.join(output, `xiaowei-memory-${other}-v1.2.3.zip`)));
+    assert.ok(!existsSync(path.join(output, 'unpacked')));
+  }
+  assert.throws(() => buildRelease(root, path.join(root, 'invalid'), {target: 'other'}), /Unknown browser target/);
+  assert.ok(!existsSync(path.join(root, 'invalid')));
 });
 
 test('release rejects symlinked input files instead of packaging outside data', t => {

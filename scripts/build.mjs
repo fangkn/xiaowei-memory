@@ -36,8 +36,23 @@ function readEntry(root, name) {
   return {name, data: new Uint8Array(readFileSync(file))};
 }
 
+function writeUnpacked(directory, entries) {
+  rmSync(directory, {recursive: true, force: true});
+  for (const entry of entries) {
+    const destination = path.join(directory, ...entry.name.split('/'));
+    mkdirSync(path.dirname(destination), {recursive: true});
+    writeFileSync(destination, entry.data);
+  }
+}
+
 /** Build deterministic release artifacts without modifying any installed extension. */
-export function buildRelease(root = projectRoot, output = path.join(root, 'dist')) {
+export function buildRelease(root = projectRoot, output = path.join(root, 'dist'), {target = 'all'} = {}) {
+  if (!['all', 'chrome', 'edge'].includes(target)) throw new Error(`Unknown browser target: ${target}`);
+  const manifest = JSON.parse(readFileSync(path.join(root, 'extension/manifest.json'), 'utf8'));
+  if (manifest.manifest_version !== 3 || !/^\d+(?:\.\d+){0,3}$/.test(manifest.version)) {
+    throw new Error('Release requires a Manifest V3 extension with a valid numeric version');
+  }
+  const browsers = target === 'all' ? ['chrome', 'edge'] : [target];
   const extensionEntries = collectFiles(path.join(root, 'extension'));
   for (const name of ['LICENSE', 'PRIVACY.md', 'SECURITY.md']) extensionEntries.push(readEntry(root, name));
   extensionEntries.sort(compareNames);
@@ -59,19 +74,27 @@ export function buildRelease(root = projectRoot, output = path.join(root, 'dist'
   const sourceZip = buildZip(sources);
 
   mkdirSync(output, {recursive: true});
-  writeFileSync(path.join(output, 'xiaowei-memory-extension.zip'), extensionZip);
-  writeFileSync(path.join(output, 'xiaowei-memory-source.zip'), sourceZip);
-  const unpacked = path.join(output, 'unpacked');
-  rmSync(unpacked, {recursive: true, force: true});
-  for (const entry of extensionEntries) {
-    const destination = path.join(unpacked, ...entry.name.split('/'));
-    mkdirSync(path.dirname(destination), {recursive: true});
-    writeFileSync(destination, entry.data);
+  const packages = [];
+  for (const browser of browsers) {
+    const filename = `xiaowei-memory-${browser}-v${manifest.version}.zip`;
+    writeFileSync(path.join(output, filename), extensionZip);
+    writeUnpacked(path.join(output, browser), extensionEntries);
+    packages.push(filename);
   }
-  return {extensionFiles: extensionEntries.length, sourceFiles: sources.length};
+  // Preserve the existing generic package and loading path for current users.
+  if (target === 'all') {
+    writeFileSync(path.join(output, 'xiaowei-memory-extension.zip'), extensionZip);
+    writeUnpacked(path.join(output, 'unpacked'), extensionEntries);
+  }
+  writeFileSync(path.join(output, 'xiaowei-memory-source.zip'), sourceZip);
+  return {extensionFiles: extensionEntries.length, sourceFiles: sources.length, packages};
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const result = buildRelease();
-  console.log(`Created extension ZIP (${result.extensionFiles} files), source ZIP (${result.sourceFiles} files), and dist/unpacked.`);
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length && !/^--target=(all|chrome|edge)$/.test(args[0]))) {
+    throw new Error('Usage: node scripts/build.mjs [--target=all|chrome|edge]');
+  }
+  const result = buildRelease(projectRoot, path.join(projectRoot, 'dist'), {target: args[0]?.split('=')[1] || 'all'});
+  console.log(`Created ${result.packages.join(', ')} (${result.extensionFiles} files each), browser loading directories, and source ZIP (${result.sourceFiles} files).`);
 }

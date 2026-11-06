@@ -8,6 +8,8 @@
     "test": "node scripts/run-tests.mjs",
     "check": "node scripts/check.mjs",
     "build": "node scripts/build.mjs",
+    "build:chrome": "node scripts/build.mjs --target=chrome",
+    "build:edge": "node scripts/build.mjs --target=edge",
     "preview": "node scripts/preview.mjs",
     "test:browser": "node scripts/run-tests.mjs browser",
     "sync:install": "node scripts/sync-install.mjs"

@@ -1,0 +1,20 @@
+# Local dependencies and generated archives
+node_modules/
+dist/
+/*.zip
+
+# Test output and local browser profiles
+coverage/
+playwright-report/
+test-results/
+.cache/
+*.log
+
+# Local configuration and operating-system files
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+*.pem
+*.key

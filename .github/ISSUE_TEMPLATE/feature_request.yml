@@ -1,0 +1,22 @@
+name: 功能建议
+description: 说明一个希望改善的备份场景
+title: "[Feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景与当前问题
+      description: 描述你想完成的事情，不需要提供真实微博内容。
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 期望的交互或结果
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 已尝试的方法或补充信息
+      description: 截图与示例请使用合成数据或先脱敏。

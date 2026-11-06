@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>小微记忆</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="backupPanel">
+  <header class="panel-header">
+    <div class="brand"><img class="brand-logo" src="icons/logo.svg" width="20" height="20" alt="" aria-hidden="true"><span>小微记忆</span><span class="version">v0.7.3</span></div>
+    <div class="window-actions">
+      <button id="panelHelp" class="icon-button" type="button" aria-label="使用帮助" aria-controls="helpPanel" aria-expanded="false" title="使用帮助"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9a2.5 2.5 0 0 1 5 .2c0 1.8-2.5 2-2.5 3.8M12 16.5v.1"/></svg></button>
+      <button id="panelMinimize" class="icon-button" type="button" aria-label="最小化备份面板" title="最小化，任务继续运行"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12h12"/></svg></button>
+      <button id="panelClose" class="icon-button close-button" type="button" aria-label="关闭备份面板" aria-controls="closePrompt" title="关闭面板"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+    </div>
+  </header>
+
+  <div class="panel-content">
+    <section id="closePrompt" class="close-prompt" role="region" aria-label="关闭面板提示" hidden>
+      <strong>任务正在进行</strong>
+      <p class="hint" id="closePromptMessage">直接关闭会中断任务。可以先最小化，任务会继续。</p>
+      <div class="close-actions"><button id="closeMinimize" class="primary" type="button">最小化并继续</button><button id="closeCancel" class="secondary" type="button">取消</button></div>
+    </section>
+    <p id="panelActionStatus" class="state-note" role="status" aria-live="polite" hidden></p>
+    <aside id="helpPanel" class="help-panel" aria-label="使用帮助" hidden>
+      <strong>按提示，一步一步备份</strong>
+      <p>先在微博个人主页确认账号，再选择备份范围。自动跳过转发，采集后按月生成 PDF。全部月份生成后统一打包为一个 ZIP，解压后每月一份 PDF。</p>
+      <p>「−」最小化后任务继续；「×」在任务结束后关闭面板，点击扩展图标可重新打开。刷新或关闭微博页会中断读取，已保存记录保留。历史任务支持续传。</p>
+      <p>只能保存当前有权访问的内容，不保证全部历史。视频保留原链接，不下载视频、评论或私信。覆盖旧笔记前请保留批注；卸载扩展前请先导出数据。</p>
+    </aside>
+
+    <div class="step-heading">
+      <div class="step-meta"><span id="stepNumber">01 / 04</span><div class="step-dots" aria-hidden="true"><span data-step-dot="1" class="current"></span><span data-step-dot="2"></span><span data-step-dot="3"></span><span data-step-dot="4"></span></div></div>
+      <h1 id="stepTitle" tabindex="-1">先确认你的账号</h1>
+    </div>
+
+    <section id="step-account" data-wizard-step="1" aria-label="确认账号">
+      <div class="account-row">
+        <span class="account-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5"/><path d="M5 20v-2a7 7 0 0 1 14 0v2"/></svg></span>
+        <div class="account-copy"><strong id="accountName">正在识别账号</strong><span id="accountUid">请稍候</span></div>
+        <button id="connect" class="text-button" type="button">重新识别</button>
+      </div>
+      <input id="uid" type="hidden" readonly>
+      <p id="connectionHint" class="hint">请在自己的微博个人主页使用。</p>
+      <button id="wizardNext" class="primary full-width" type="button" disabled>下一步 <span aria-hidden="true">→</span></button>
+      <button id="wizardLocalExport" class="text-button local-export" type="button" hidden>导出本机已有记录</button>
+    </section>
+
+    <section id="step-scope" data-wizard-step="2" aria-label="选择备份范围" hidden>
+      <p class="hint" style="margin-bottom:10px">只保存原创，自动跳过转发。</p>
+      <fieldset class="mode-options">
+        <legend class="sr-only">备份范围</legend>
+        <label class="mode-option"><input type="radio" name="backupMode" value="page" checked><span><strong>当前页面</strong><small>边向下浏览，边保存微博</small></span></label>
+        <label class="mode-option"><input type="radio" name="backupMode" value="history"><span><strong>指定月份 <em>实验功能</em></strong><small>按月份读取自己的历史微博</small></span></label>
+      </fieldset>
+      <div id="pageOptions">
+        <details class="options-details"><summary>采集选项</summary><div class="details-body">
+          <label class="checkbox-label"><input id="scroll" type="checkbox" checked>自动向下加载</label>
+          <button id="top" class="text-button inline-action" type="button">回到顶部检查新增</button>
+          <p class="hint">已有内容会自动去重，也可以暂停后手动滚动。</p>
+        </div></details>
+      </div>
+      <div id="historyOptions" hidden>
+        <div class="month-range"><label>起始年月<input id="historyFrom" type="month" min="2009-01"></label><label>结束年月<input id="historyTo" type="month" min="2009-01"></label></div>
+        <label class="checkbox-label consent"><input id="ownAccount" type="checkbox"><span>这是我的账号，已登录本人微博，同意只读查询。</span></label>
+        <details class="options-details"><summary>历史查询选项</summary><div class="details-body">
+          <label class="checkbox-label"><input id="historyRestart" type="checkbox"><span>重新从第一页核查，保留已有记录</span></label>
+          <button id="historyDirectory" class="text-button inline-action" type="button">读取年月目录（参考）</button>
+          <p class="hint">请从自己确认的最早月份开始。网页接口不保证完整历史，目录没有列出的月份也会查询。</p>
+          <pre id="historyReport">暂无记录</pre>
+        </div></details>
+      </div>
+      <div class="step-actions"><button id="wizardBack" class="secondary" type="button">上一步</button><button id="wizardStart" class="primary" type="button">开始备份 <span aria-hidden="true">→</span></button></div>
+    </section>
+
+    <section id="step-progress" data-wizard-step="3" aria-label="备份进度" hidden>
+      <div class="capture-count"><strong id="collectedCount">0</strong><span>条原创已保存</span></div>
+      <div id="pageProgress" class="collection-progress" role="progressbar" aria-label="页面采集进度" aria-valuetext="等待采集，微博总数未知" data-active="false"></div>
+      <progress id="historyProgress" class="collection-progress" value="0" max="1" aria-label="所选月份遍历进度" hidden></progress>
+      <p id="progressSummary" class="progress-summary" role="status" aria-live="polite">正在准备读取微博…</p>
+      <div id="historyProgressInfo" hidden>
+        <details class="options-details"><summary>查看月份进度</summary><div class="details-body"><p id="historySummary" class="hint">未规划任务</p><p id="historyStatus" class="hint" role="status" aria-live="polite"></p></div></details>
+      </div>
+      <div class="step-actions"><button id="pause" class="secondary" type="button">暂停</button><button id="wizardResume" class="secondary" type="button" hidden>继续</button><button id="wizardToExport" class="primary" type="button" disabled>下一步，导出 <span aria-hidden="true">→</span></button></div>
+      <p class="hint small-note">可随时暂停。已保存的数量不代表全部历史。</p>
+      <button id="wizardReselect" class="text-button" type="button" hidden>重新选择范围</button>
+      <details class="options-details"><summary>查看采集详情</summary><pre id="diagnostics">暂无记录</pre></details>
+    </section>
+
+    <section id="step-export" data-wizard-step="4" aria-label="导出备份" hidden>
+      <div id="exportReady">
+        <p class="export-summary"><strong id="total">0</strong> 条原创，每个月一份文件。</p>
+        <label class="field-label">导出月份<select id="batch"><option value="">没有待导出的月份</option></select></label>
+        <label class="checkbox-label image-option"><input id="images" type="checkbox" checked>包含图片</label>
+        <details class="options-details"><summary>更多导出选项</summary><div class="details-body">
+          <label class="field-label">文件格式<select id="format"><option value="pdf" selected>PDF（每月一份）</option><option value="markdown">Markdown + 图片（ZIP）</option></select></label>
+          <div class="month-range"><label>起始月份<input id="from" type="month"></label><label>结束月份<input id="to" type="month"></label></div>
+          <label class="checkbox-label"><input id="incremental" type="checkbox">只显示新增 / 有变化的月份</label>
+          <p class="hint quality-note">正文可能不全 <strong id="partial">0</strong> 条 · 日期未知 <strong id="unknown">0</strong> 条</p>
+          <p id="legacyWarning" class="hint warning-text"></p>
+          <p class="hint">只导出本机保存的原创，已过滤转发。日期不明的内容单独成册，不猜测月份。</p>
+        </div></details>
+        <p class="hint export-destination">每个月生成一份文件，全部完成后打包下载。生成期间可最小化。</p>
+        <div id="exportProgressInfo" class="export-progress-info" hidden>
+          <div class="export-progress-label"><span id="exportProgressLabel">准备导出…</span><span id="exportProgressPercent">0%</span></div>
+          <progress id="exportProgress" class="collection-progress" max="1" value="0" aria-label="整体导出进度"></progress>
+          <p id="exportProgressDetail" class="hint"></p>
+        </div>
+        <div class="step-actions"><button id="wizardExportBack" class="secondary" type="button">上一步</button><button id="export" class="primary" type="button"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v11m-4-4 4 4 4-4M5 15v5h14v-5"/></svg>下载 PDF</button></div>
+        <p id="exportStatus" class="state-note" role="status" aria-live="polite"></p>
+        <details id="exportFailures" class="export-failures" hidden><summary id="exportFailureSummary">查看失败详情</summary><pre id="exportFailureList" tabindex="0" aria-label="失败月份、微博和图片地址"></pre></details>
+        <button id="confirmExport" class="primary full-width confirm-export" type="button" hidden disabled>已核对下载，完成 <span aria-hidden="true">✓</span></button>
+      </div>
+      <div id="exportDone" class="export-done" hidden>
+        <span class="done-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="m8 16 5 5 11-11"/></svg></span>
+        <p id="doneMonth" class="done-month"></p>
+        <p id="doneHint" class="hint">打开 PDF 即可阅读。多个月份请先解压 ZIP，每月一个 PDF。</p>
+        <button id="wizardAnother" class="primary full-width" type="button" hidden>导出其他月份</button>
+        <button id="wizardRestart" class="text-button" type="button">再备份一次</button>
+      </div>
+    </section>
+
+    <p id="status" class="state-note" role="status" aria-live="polite">正在识别微博账号…</p>
+  </div>
+  <footer class="panel-footer"><span id="panelActivity">准备中</span><span>内容只保存在本机</span></footer>
+</main>
+<script type="module" src="dashboard.js"></script>
+</body>
+</html>

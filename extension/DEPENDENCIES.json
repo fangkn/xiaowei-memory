@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "note": "SHA-256 identifies the bundled files; it does not by itself prove the original upstream build is reproducible.",
+  "dependencies": [
+    {
+      "name": "pdf-lib",
+      "version": "1.17.1",
+      "license": "MIT",
+      "upstream": "https://github.com/Hopding/pdf-lib",
+      "source": "https://registry.npmjs.org/pdf-lib/-/pdf-lib-1.17.1.tgz",
+      "transformation": "Official dist/pdf-lib.esm.min.js bundled unchanged.",
+      "artifacts": [
+        {
+          "path": "vendor/pdf-lib.esm.min.js",
+          "sha256": "72c052d97b4d5d9fa6cdbdcb7ad709f03d4ddb1122390cb3afeba4d88651d969"
+        },
+        {
+          "path": "vendor/pdf-lib-LICENSE.md",
+          "sha256": "f2c9fc00fdb66eb99ac156ba52d734af66d8d309f65753ae809ad34ee2883bcb"
+        }
+      ]
+    },
+    {
+      "name": "@pdf-lib/fontkit",
+      "version": "1.1.1",
+      "license": "MIT",
+      "upstream": "https://github.com/Hopding/fontkit",
+      "source": "https://registry.npmjs.org/@pdf-lib/fontkit/-/fontkit-1.1.1.tgz",
+      "sourceTarballSha1": "f18473892b65e3253eb73f4569785abd2c03b1e0",
+      "transformation": "The official UMD factory is retained, with its outer global registration replaced by a local ES module export.",
+      "artifacts": [
+        {
+          "path": "vendor/fontkit.esm.min.js",
+          "sha256": "a4002d4fe4cbfb86ff8daf0c228eaed9950299d3e68e9af1723bde320e7cc279"
+        },
+        {
+          "path": "vendor/fontkit-LICENSE.txt",
+          "sha256": "cf22b8198f0886a8d4626121579114f23141070e1fceab02ab3c1c361e163440"
+        }
+      ]
+    },
+    {
+      "name": "Noto Sans SC Regular",
+      "version": "2.004",
+      "license": "OFL-1.1",
+      "upstream": "https://github.com/notofonts/noto-cjk",
+      "source": "Sans/Variable/TTF/Subset/NotoSansSC-VF.ttf",
+      "upstreamCommit": null,
+      "transformation": "fontTools varLib.instancer wght=400 --static --update-name-table --no-recalc-timestamp",
+      "reproducibility": "The original source commit and fontTools version were not recorded. The committed static font is the pinned build input; do not claim byte-identical regeneration from upstream.",
+      "artifacts": [
+        {
+          "path": "fonts/NotoSansSC-Regular.ttf",
+          "sha256": "ee0196181d143544016fdae98b4fa83db18536c249068fec361c5a60ef3d9fb7"
+        },
+        {
+          "path": "fonts/OFL.txt",
+          "sha256": "ce5cc0062a5023615b633d89f16b841cc054d2abd55da765a085637deaaa002e"
+        }
+      ]
+    },
+    {
+      "name": "pako",
+      "license": "MIT AND Zlib",
+      "upstream": "https://github.com/nodeca/pako",
+      "note": "Embedded within the bundled PDF library distributions; no separate runtime download.",
+      "artifacts": [
+        {
+          "path": "vendor/pako-LICENSE.txt",
+          "sha256": "a04665b3b2de56c66730c1f720f528175739e4104f79073614aa611da1e85539"
+        }
+      ]
+    }
+  ]
+}

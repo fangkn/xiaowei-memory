@@ -44,7 +44,11 @@ export async function runHistoryTask(input,deps){
         // Filtering must not conceal an ignored date range or turn a repost-only
         // page into empty evidence. It also avoids requesting excluded long text.
         const include=deps.shouldIncludePost?await deps.shouldIncludePost(post):true;check();
-        if(!include){skipped++;continue}
+        if(!include){
+          // 已有记录的分类纠正也必须落盘后，才能推进本页检查点。
+          if(deps.saveExcludedPost)await deps.saveExcludedPost(post);
+          check();skipped++;continue;
+        }
         const needs=[...(post.needsLongText||[])];let missing=false;
         for(const need of needs){
           try{

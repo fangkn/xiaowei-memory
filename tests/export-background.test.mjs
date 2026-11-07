@@ -4,8 +4,10 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import {EXPORT_MEDIA_ORIGINS, normalizeExportMediaURL} from '../extension/media-data.js';
 import {createReferrerMediaReader, MEDIA_REFERRER_RULE_ID} from '../extension/media-referrer.js';
+import {createExportJob, completedExportMonths, runExportJob} from '../extension/export-runner.js';
 
 const source = readFileSync(new URL('../extension/background.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/gm, '');
+const browserExportSource = readFileSync(new URL('../extension/browser-export.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
 const extensionId = 'abcdefghijklmnopabcdefghijklmnop';
 const extensionURL = `chrome-extension://${extensionId}/`;
 const blobURL = `blob:${extensionURL}11223344-5566-7788-99aa-bbccddeeff00`;
@@ -147,6 +149,44 @@ test('download bridge defaults to a save dialog and accepts explicit automatic b
     assert.equal((await h.message(download({filename: name, saveAs: false}))).ok, true);
   }
   for (const saveAs of [null, 0, 'false', {}]) assert.equal((await h.message(download({saveAs}))).ok, false);
+});
+
+test('combined runner downloads through the real panel fallback and background filename validation', async () => {
+  const h = harness(), entries = new Map();
+  // 面板不提供 downloads API，必须经过生产兼容入口与真实后台消息校验。
+  const context = vm.createContext({chrome: {runtime: {id: extensionId,
+    getManifest: () => ({version: 'test'}), sendMessage: message => h.message(message)}}});
+  vm.runInContext(browserExportSource, context);
+  const bridge = vm.runInContext('({downloadExport, exportDownloadState})', context);
+  const uid = '1000000001', options = {format: 'pdf-combined', images: false};
+  const batches = ['2026-10', '2026-11'].map(month => ({uid, month, revision: month,
+    posts: [{uid, id: `Original${month.replace('-', '')}`}]}));
+  const job = createExportJob(uid, options, batches);
+  await runExportJob({job, batches, options}, {
+    prepareCombined: async () => ({bytes: new TextEncoder().encode('%PDF-1.7\ncombined\n%%EOF'),
+      extension: 'pdf', mime: 'application/pdf', savedImageCount: 0, failedImageCount: 0}),
+    openFiles: async () => ({
+      get: async name => entries.get(name) || null,
+      put: async (name, bytes) => {entries.set(name, new Blob([bytes])); return {size: bytes.byteLength};},
+    }),
+    downloadFile: bridge.downloadExport, downloadState: bridge.exportDownloadState,
+    saveJob: async () => {}, createObjectURL: () => blobURL, revokeObjectURL: () => {},
+  });
+  assert.equal(h.calls.downloads.length, 1);
+  const generated = h.calls.downloads[0].filename;
+  assert.match(generated, /-combined-originals-.*\.pdf$/);
+  assert.equal(h.calls.downloads[0].saveAs, true);
+  assert.deepEqual([...completedExportMonths(job).keys()], ['2026-10', '2026-11']);
+  assert.equal(job.downloads[0].state, 'complete');
+
+  for (const name of [generated.replace('.pdf', '.zip'), `../${generated}`, `folder/${generated}`, generated + '/x']) {
+    assert.equal((await h.message(download({filename: name}))).ok, false, name);
+  }
+  for (const url of ['https://evil.test/file.pdf', 'blob:https://weibo.com/11223344-5566-7788-99aa-bbccddeeff00']) {
+    assert.equal((await h.message(download({filename: generated, url}))).ok, false, url);
+  }
+  assert.equal((await h.message(download({filename: generated}), {...h.sender, id: 'other-extension'})).ok, false);
+  assert.equal(h.calls.downloads.length, 1, 'invalid combined downloads never reach the browser API');
 });
 
 test('download bridge refuses external URLs, foreign blobs and malformed blob tokens', async () => {

@@ -41,10 +41,11 @@ function handleExportMessage(message, sendResponse) {
   if (message.type === 'WOB_EXPORT_DOWNLOAD') {
     const prefix = `blob:${chrome.runtime.getURL('')}`;
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const filename = /^weibo-\d{4,20}-(?:(?:\d{4}-(?:0[1-9]|1[0-2])|unknown|monthly)-originals|monthly-part\d{3,6})-\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3])-[0-5]\d-[0-5]\d-\d{3}Z\.(?:pdf|zip)$/;
+    const filename = /^weibo-\d{4,20}-(?:(?:\d{4}-(?:0[1-9]|1[0-2])|unknown|monthly|combined)-originals|monthly-part\d{3,6})-\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3])-[0-5]\d-[0-5]\d-\d{3}Z\.(?:pdf|zip)$/;
     if (typeof message.url !== 'string' || !message.url.startsWith(prefix) || !uuid.test(message.url.slice(prefix.length)) ||
         typeof message.filename !== 'string' || !filename.test(message.filename) ||
         (message.filename.includes('-monthly-part') && !message.filename.endsWith('.zip')) ||
+        (message.filename.includes('-combined-originals-') && !message.filename.endsWith('.pdf')) ||
         (message.saveAs !== undefined && typeof message.saveAs !== 'boolean')) {
       fail('导出文件信息无效，请重新生成文件。'); return false;
     }

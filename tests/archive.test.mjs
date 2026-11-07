@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {buildArchiveEntries,buildZip,renderMarkdown,postAnchor,crc32,MAX_ARCHIVE_BYTES} from '../extension/archive.js';
+import {buildArchiveEntries,buildZip,renderMarkdown,postAnchor,crc32,MAX_ARCHIVE_BYTES,MONTH_DIRECTORY_LAYOUT} from '../extension/archive.js';
 const post={id:'Rpabc123',uid:'123456789',author:'测试"作者\nabc',url:'https://weibo.com/123456789/Rpabc123?token=secret#x',createdAt:'2026-10-31T17:00:00Z',dateRaw:'11月1日 01:00',text:'你好\n<img src="https://evil.com/a"> ![x](https://evil.com/a)',images:['https://wx1.sinaimg.cn/large/a.jpg?token=secret'],fullText:true,firstSeenAt:'2026-11-01T01:00:00Z'};
 const mediaFor=p=>new Map(p.images.map(url=>[url,{bytes:new Uint8Array([1,2,3]),mime:'image/jpeg'}]));
 const manifest=entries=>JSON.parse(entries.find(e=>e.name==='微博备份/manifest.json').data);
@@ -87,4 +87,50 @@ test('ZIP rejects traversal, duplicate paths, excessive count and oversized whol
  for(const name of ['../oops','/root.txt','a/../x','a\\x','C:/x','./file','a//b'])assert.throws(()=>buildZip([{name,data:''}]),/路径/);
  assert.throws(()=>buildZip([{name:'a',data:''},{name:'a',data:''}]),/重复/);assert.throws(()=>buildZip(Array(65536).fill({name:'a',data:''})),/数量/);
  assert.throws(()=>buildZip([{name:'huge-month.bin',data:new Uint8Array(MAX_ARCHIVE_BYTES)}]),/128 MB/);
+});
+
+test('month-directory layout keeps notes, current images and history in one self-contained folder',()=>{
+ const p={...post,versions:[{...post,text:'去年旧内容',createdAt:'2025-01-01T00:00:00Z',contentHash:'old-snapshot'}]},before=structuredClone(p);
+ const entries=buildArchiveEntries({posts:[p],media:mediaFor(p),layout:'month-directory'}),names=new Set(entries.map(entry=>entry.name));
+ assert.deepEqual([...names].sort(),[
+  '2026-11/2026-11.md','2026-11/2026-11-history.md','2026-11/assets/Rpabc123/01.jpg',
+  '2026-11/assets/Rpabc123/versions/1/01.jpg','2026-11/manifest.json','2026-11/导入说明.md',
+ ].sort());
+ const m=JSON.parse(entries.find(entry=>entry.name==='2026-11/manifest.json').data);
+ assert.equal(m.archiveLayout,MONTH_DIRECTORY_LAYOUT);assert.equal(m.months[0].path,'2026-11/2026-11.md');
+ assert.equal(m.months[0].historyPath,'2026-11/2026-11-history.md');assert.equal(m.savedImageCount,2);
+ assert.equal(m.records[1].month,'2026-11','historical dates stay with the current saved month');
+ assert.match(entries.find(entry=>entry.name.endsWith('-history.md')).data,/2025-01-01/);
+ for(const record of m.records){const note=entries.find(entry=>entry.name===record.path);assert.ok(note);assert.ok(note.data.includes(`^${record.anchor}`));}
+ for(const note of entries.filter(entry=>entry.name.endsWith('.md'))){
+  for(const match of note.data.matchAll(/!?\[(?:图片 \d+|查看本月历史观察|返回本月主笔记)\]\(([^)]+)\)/g)){
+   assert.ok(!match[1].startsWith('../'));assert.ok(names.has(path.posix.join(path.posix.dirname(note.name),match[1])),`${note.name}: ${match[1]}`);
+  }
+ }
+ assert.match(entries.find(entry=>entry.name==='2026-11/2026-11.md').data,/\[查看本月历史观察\]\(2026-11-history.md\)/);
+ assert.match(entries.find(entry=>entry.name==='2026-11/2026-11-history.md').data,/\[返回本月主笔记\]\(2026-11.md\)/);
+ assert.deepEqual(p,before);assert.doesNotThrow(()=>buildZip(entries));
+});
+
+test('unknown month directory keeps all local links and manifest paths within 未知日期',()=>{
+ const p={...post,createdAt:null,versions:[{...post,contentHash:'old-snapshot'}]};
+ const entries=buildArchiveEntries({posts:[p],media:mediaFor(p),layout:'month-directory'}),names=new Set(entries.map(entry=>entry.name));
+ assert.ok(entries.every(entry=>entry.name.startsWith('未知日期/')));assert.ok(names.has('未知日期/未知日期.md'));
+ const m=JSON.parse(entries.find(entry=>entry.name==='未知日期/manifest.json').data);
+ assert.equal(m.months[0].month,'unknown');assert.equal(m.months[0].historyPath,'未知日期/未知日期-history.md');
+ for(const note of entries.filter(entry=>entry.name.endsWith('.md')))for(const match of note.data.matchAll(/!?\[(?:图片 \d+|查看本月历史观察|返回本月主笔记)\]\(([^)]+)\)/g))
+  assert.ok(names.has(path.posix.join(path.posix.dirname(note.name),match[1])));
+ assert.doesNotThrow(()=>buildZip(entries));
+});
+
+test('month-directory scope rejects empty, mixed accounts, mixed months and unsafe IDs before creating entries',()=>{
+ for(const posts of [[],[post,{...post,uid:'987654321'}],[post,{...post,id:'Rother',createdAt:'2026-10-01T00:00:00Z'}],
+  [post,{...post,createdAt:'2026-10-01T00:00:00Z'}],[post,{...post,id:'Runknown',createdAt:null}]])
+  assert.throws(()=>buildArchiveEntries({posts,layout:'month-directory'}),/同一账号同一个月/);
+ for(const bad of [{...post,id:'../escape'},{...post,uid:'../escape'}])assert.throws(()=>buildArchiveEntries({posts:[bad],layout:'month-directory'}),/不合法/);
+ assert.throws(()=>buildArchiveEntries({posts:[post],layout:'../../escape'}),/布局/);
+ const entries=buildArchiveEntries({posts:[post,post],layout:'month-directory',report:{mode:'text-only',month:'../../escape',snapshotMonth:'../other',archiveLayout:'wrong'}});
+ assert.ok(entries.every(entry=>entry.name.startsWith('2026-11/')));
+ assert.equal(entries.filter(entry=>entry.name.endsWith('/2026-11.md')).length,1);
+ const m=JSON.parse(entries.find(entry=>entry.name==='2026-11/manifest.json').data);assert.equal(m.exportedPostCount,1);assert.equal(m.archiveLayout,MONTH_DIRECTORY_LAYOUT);
 });

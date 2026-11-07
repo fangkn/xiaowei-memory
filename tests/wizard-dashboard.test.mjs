@@ -23,7 +23,7 @@ function fields() {
   };
 }
 
-function backupHarness({changedUid = false, connectBarrier = Promise.resolve()} = {}) {
+function backupHarness({changedUid = false, connectBarrier = Promise.resolve(), startResult = 'ready', startError = null} = {}) {
   const ui = stateController(transitionWizard(transitionWizard(createWizardState(), {type: 'CONNECTION', connected: true}), {type: 'NEXT'}));
   const calls = {connections: 0, starts: 0};
   const context = vm.createContext({
@@ -36,7 +36,7 @@ function backupHarness({changedUid = false, connectBarrier = Promise.resolve()} 
       ui.dispatch({type: 'CONNECTION', connected: true});
     },
     async saveOptions() {},
-    async start() { calls.starts++; ui.dispatch({type: 'STARTED'}); },
+    async start() { calls.starts++; ui.dispatch({type: 'STARTED'}); if (startError) throw startError; return startResult; },
     async startHistory() { calls.starts++; ui.dispatch({type: 'STARTED'}); },
     async refresh() {},
   });
@@ -65,6 +65,75 @@ test('changing the source profile after confirmation requires confirming the new
   assert.equal(harness.ui.state.phase, 'idle');
 });
 
+test('a delayed older profile connection cannot bind its avatar to a newer account', async () => {
+  let owner = '1000000001', releaseOldRead, reachedOldRead;
+  const oldRead = new Promise(resolve => {releaseOldRead = resolve;});
+  const reading = new Promise(resolve => {reachedOldRead = resolve;});
+  const accounts = [], writes = [];
+  let reads = 0;
+  const context = vm.createContext({uid:'', tabId:1, connectionVersion:0, latestScan:null, pendingExport:null,
+    $:fields(), panelUI:{dispatch() {}, setAccount(...args) {accounts.push(args);}},
+    chrome:{tabs:{get:async () => ({url:`https://weibo.com/u/${owner}`})}, scripting:{executeScript:async () => []}},
+    send:async () => ({ok:true, diagnostics:{pageUid:owner, pageName:`合成账号${owner}`, pageAvatar:`https://tvax1.sinaimg.cn/${owner}.jpg`}}),
+    validProfile:() => true, accountAvatarURL:value => value || '', status() {}, refresh:async () => {},
+    db:{get:async () => {if (++reads === 1) {reachedOldRead(); await oldRead;} return null;},
+      put:async (_store, value) => writes.push(value)},
+  });
+  vm.runInContext(extract('async function connect(){', 'async function exportSelection('), context);
+  const first = vm.runInContext('connect()', context);
+  await reading;
+  owner = '1000000002';
+  assert.equal(await vm.runInContext('connect()', context), true);
+  releaseOldRead();
+  assert.equal(await first, false);
+  assert.equal(accounts.length, 1);
+  assert.equal(accounts[0][0], owner);
+  assert.equal(accounts[0][3], `https://tvax1.sinaimg.cn/${owner}.jpg`);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].uid, owner);
+  assert.equal(writes[0].avatar, accounts[0][3]);
+  assert.equal(vm.runInContext('uid', context), owner);
+});
+
+test('collection settles with the real result and never completes after a failed final save', async () => {
+  for (const startResult of ['ready','paused','error']) {
+    const harness = backupHarness({startResult});
+    await harness.run();
+    assert.equal(harness.ui.state.collectionOutcome, startResult);
+    assert.equal(harness.ui.state.phase, 'idle');
+  }
+  const failed = backupHarness({startError:new Error('保存检查点失败')});
+  await assert.rejects(failed.run(), /保存检查点失败/);
+  assert.equal(failed.ui.state.collectionOutcome, 'error');
+  assert.equal(failed.ui.state.phase, 'idle');
+});
+
+test('pausing during the final collection save returns a saved pause instead of a stale stopping message', async () => {
+  const ui = stateController(transitionWizard(transitionWizard(transitionWizard(createWizardState(),
+    {type:'CONNECTION',connected:true}), {type:'NEXT'}), {type:'PREPARE'}));
+  const $ = fields();
+  $('scroll').checked = false;
+  let releaseSave, reachedSave;
+  const saveGate = new Promise(resolve => {releaseSave = resolve;});
+  const saving = new Promise(resolve => {reachedSave = resolve;});
+  const context = vm.createContext({uid:UID, running:false, exporting:false, generation:0, latestScan:null,
+    panelUI:ui, $, activeControls() {}, status:text => {$('status').textContent = text;},
+    navigator:{locks:{request:async (_name, _options, callback) => callback({})}},
+    scanOnce:async () => ({updates:1,discovered:1,reposts:0}),
+    db:{put:async () => {reachedSave(); await saveGate;}},
+  });
+  vm.runInContext(extract('async function start(){', 'function usableMedia('), context);
+  const task = vm.runInContext('start()', context);
+  await saving;
+  vm.runInContext('pause()', context);
+  assert.equal(ui.state.phase, 'stopping');
+  assert.match($('status').textContent, /正在暂停/);
+  releaseSave();
+  assert.equal(await task, 'paused');
+  assert.match($('status').textContent, /进度已保存/);
+  assert.doesNotMatch($('status').textContent, /正在暂停/);
+});
+
 function confirmationHarness({downloadState = 'complete', failRefreshOnce = false, failLedgerOnce = false} = {}) {
   let state = transitionWizard(createWizardState(), {type: 'SAVED', count: 2});
   for (const type of ['OPEN_EXPORT', 'EXPORTING']) state = transitionWizard(state, {type});
@@ -76,7 +145,7 @@ function confirmationHarness({downloadState = 'complete', failRefreshOnce = fals
     panelUI: ui, isWizardBusy, $: fields(), status() {}, activeControls() {},
     chrome: {runtime: {id: 'test-extension', getManifest: () => ({version: '0.6.9'})}, downloads: {search: async query => { calls.downloads.push(query.id); return [{state: downloadState}]; }}},
     monthLedgerKey: owner => `monthly:${owner}`,
-    db: {get: async () => ({}), put: async () => {
+    db: {mergeSetting: async () => {
       calls.ledgerWrites++;
       if (failLedgerOnce && calls.ledgerWrites === 1) throw new Error('ledger unavailable');
     }},

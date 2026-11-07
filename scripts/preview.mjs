@@ -49,7 +49,7 @@ function previewBootstrap(version) {
   function postAt(date, index) {
     const createdAt = date.toISOString(), month = createdAt.slice(0, 7), id = `Offline${month.replace('-', '')}`;
     return {uid, id, identitySource: 'desktop-permalink', url: `https://weibo.com/${uid}/${id}`, author: '离线示例账号',
-      createdAt, dateRaw: `${month}-10 10:00`, text: `${month} 的离线记忆：秋日散步，变化好大！\u200B\u200B\u200B 👍🏽 👩‍👩‍👧‍👦 [笑cry]\n第 ${index + 1} 条合成记录，图片、表情和文字都仅用于本机测试。`,
+      createdAt, dateRaw: `${month}-10 10:00`, text: `${month} 的离线记忆：秋日散步，变化好大！\u200B\u200B\u200B 👍🏽 👩‍👩‍👧‍👦 [笑cry]\n第 ${index + 1} 条合成记录，图片、表情和文字都仅用于本机测试。\n同行：@离线笔记 (https://weibo.com/n/${encodeURIComponent('离线笔记')}) #日常记录# (https://s.weibo.com/weibo?q=${encodeURIComponent('#日常记录#')})`,
       isRepost: false, repostText: '', repostUrl: '', images: [photoURL], emoticons: [{text: '[笑cry]', url: faceURL}], fullText: true};
   }
   const posts = many ? Array.from({length: 87}, (_, index) => postAt(new Date(Date.UTC(2019, 8 + index, 10, 2)), index)) :
@@ -95,7 +95,7 @@ function previewBootstrap(version) {
         const list = document.getElementById('downloadReceipts'), row = document.createElement('li');
         row.textContent = `#${downloadId} · ${message.filename} · ${(blob.size / 1024 / 1024).toFixed(2)} MiB`;
         list.prepend(row); while (list.children.length > 12) list.lastElementChild.remove();
-        document.getElementById('downloadSummary').textContent = `已收到 ${state.downloads.size} 次文件下载；${state.saveFiles ? '同时保存到浏览器下载目录' : '仅模拟回执，没有自动下载'}。多个月份统一为一个 ZIP。`;
+        document.getElementById('downloadSummary').textContent = `已收到 ${state.downloads.size} 次文件下载；${state.saveFiles ? '同时保存到浏览器下载目录' : '仅模拟回执，没有自动下载'}。`;
         if (state.saveFiles) { const save = document.createElement('a'); save.href = copyURL; save.download = message.filename; document.body.append(save); save.click(); save.remove(); }
         status(`模拟后台已收到下载 #${downloadId}：${message.filename}`);
         return {ok: true, downloadId};
@@ -173,14 +173,14 @@ function installMock() {
       return new Promise(resolve => parent.previewListener(message, {id: 'preview'}, resolve));
     }
   }, tabs: {get: async () => ({id: 1, url: parent.previewAPI.profileURL()}),
-    sendMessage: async (_id, message) => message.type === 'WOB_SCAN' ? parent.previewAPI.scan() : {ok: true}},
+    sendMessage: async (_id, message) => ['WOB_SCAN','WOB_PROFILE'].includes(message.type) ? parent.previewAPI.scan() : {ok: true}},
   scripting: {executeScript: async config => config.args ? [{result: {ok: true, json: {ok: 1, data: {list: []}}}}] : [{result: parent.previewAPI.profileURL()}]}};
 }
 const mock = `(${installMock.toString()})();`;
 const version = JSON.parse(await readFile(path.join(extension, 'manifest.json'), 'utf8')).version;
 const shell = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>小微记忆 · 悬浮面板预览</title><style>
 *{box-sizing:border-box}body{margin:0;background:#202024;color:#bdbdc7;font:15px/1.7 system-ui,-apple-system,sans-serif}header{height:66px;padding:18px 28px;border-bottom:1px solid #3c3c44;font-weight:650}.page{max-width:850px;margin:48px auto;padding:24px}.note{color:#a7a7b3;font-size:13px}.post{border:1px solid #3d3d46;border-radius:14px;padding:24px;margin:18px 0;background:#29292f}.post h2{font-size:18px;color:#e4e4e9}.tools{display:flex;gap:8px;flex-wrap:wrap}button{background:#41414b;border:1px solid #666671;border-radius:8px;padding:8px 12px;color:#f0f0f4;cursor:pointer}button:disabled{opacity:.5}a{color:#c0b3ff;overflow-wrap:anywhere}#fixturePhoto{width:min(100%,480px);border-radius:10px}#downloadReceipts{font:12px/1.6 ui-monospace,monospace;padding-left:20px;overflow-wrap:anywhere}#pdfPreview{border:1px solid #666671;border-radius:10px;width:100%;height:760px;margin-top:16px;background:#fff}[hidden]{display:none!important}@media(max-width:500px){.page{margin-top:380px;padding:12px}header{padding:16px}}
-</style></head><body><header>微博页面 · 离线预览</header><main class="page"><p class="note">示例账号、图片和微博均为离线合成数据，不访问真实微博。PDF 与 ZIP 使用实际导出代码生成，默认只模拟下载回执。</p><div class="tools"><button id="recordMode">切换示例</button><button id="seedRecords">载入示例（跳过采集）</button><button id="saveMode">仅模拟下载回执</button></div><p class="note" id="fixtureMode"></p><p class="note" id="seedStatus">先载入示例，再从浮窗导出已有记录。选择单个月可在下方预览实际 PDF；全部月份会先逐月生成，最后统一打包为一个 ZIP。</p><div class="tools"><button id="reopen">再次点击扩展图标</button><button id="sourceState">模拟未连接</button><button id="contextState">模拟扩展失效</button><button id="permissionState">模拟拒绝图片权限</button><button id="downloadState">模拟下载失败</button><button id="downloadComplete">模拟下载未完成</button></div><p class="note" id="contextStatus">扩展连接模拟：正常；切换失效不会重新加载真实扩展。</p><p class="note" id="exportBridgeStatus">导出接口模拟：面板不提供 permissions / downloads。</p><article class="post"><h2>离线示例账号</h2><p>秋日散步，变化好大！👍🏽 👩‍👩‍👧‍👦 [笑cry]</p><img id="fixturePhoto" alt="离线合成的山水照片测试素材"></article><article class="post"><h2>生成结果</h2><p class="note" id="downloadSummary">尚未生成文件。仅保留最近一份文件的预览链接，避免测试页面累积内存。</p><a id="lastFile" hidden>下载最近生成的文件</a><ol id="downloadReceipts"></ol><iframe id="pdfPreview" title="最近生成的 PDF 预览" hidden></iframe></article></main><script>(${previewBootstrap.toString()})(${JSON.stringify(version)});${mock}</script><script src="/floating-panel.js"></script></body></html>`;
+</style></head><body><header>微博页面 · 离线预览</header><main class="page"><p class="note">示例账号、图片和微博均为离线合成数据，不访问真实微博。PDF 与 ZIP 使用实际导出代码生成，默认只模拟下载回执。</p><div class="tools"><button id="recordMode">切换示例</button><button id="seedRecords">载入示例（跳过采集）</button><button id="saveMode">仅模拟下载回执</button></div><p class="note" id="fixtureMode"></p><p class="note" id="seedStatus">先载入示例，再从浮窗导出已有记录。选择“PDF（全部合成一份）”可在下方预览合并结果；默认按月模式会将多个月份打包为一个 ZIP。</p><div class="tools"><button id="reopen">再次点击扩展图标</button><button id="sourceState">模拟未连接</button><button id="contextState">模拟扩展失效</button><button id="permissionState">模拟拒绝图片权限</button><button id="downloadState">模拟下载失败</button><button id="downloadComplete">模拟下载未完成</button></div><p class="note" id="contextStatus">扩展连接模拟：正常；切换失效不会重新加载真实扩展。</p><p class="note" id="exportBridgeStatus">导出接口模拟：面板不提供 permissions / downloads。</p><article class="post"><h2>离线示例账号</h2><p>秋日散步，变化好大！👍🏽 👩‍👩‍👧‍👦 [笑cry]</p><img id="fixturePhoto" alt="离线合成的山水照片测试素材"></article><article class="post"><h2>生成结果</h2><p class="note" id="downloadSummary">尚未生成文件。仅保留最近一份文件的预览链接，避免测试页面累积内存。</p><a id="lastFile" hidden>下载最近生成的文件</a><ol id="downloadReceipts"></ol><iframe id="pdfPreview" title="最近生成的 PDF 预览" hidden></iframe></article></main><script>(${previewBootstrap.toString()})(${JSON.stringify(version)});${mock}</script><script src="/floating-panel.js"></script></body></html>`;
 
 const server = http.createServer(async (req,res) => {
   try {

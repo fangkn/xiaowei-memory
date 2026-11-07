@@ -33,6 +33,7 @@ export async function writeStreamingZip(entries, sink, {assertContext = () => {}
     if (seen.has(entry.name)) throw new Error('ZIP 内有重复文件路径。');
     seen.add(entry.name);
     if (!Number.isSafeInteger(entry.size) || entry.size < 0 || typeof entry.open !== 'function') throw new Error('ZIP 文件数据无效。');
+    if (entry.crc32 !== undefined && (!Number.isInteger(entry.crc32) || entry.crc32 < 0 || entry.crc32 > 0xffffffff)) throw new Error('ZIP 文件 CRC32 无效。');
     expectedSize += 30 + name.length + entry.size + 16 + 46 + name.length;
     totalBytes += entry.size;
     // ZIP32 保留 0xffffffff 作为 ZIP64 标记，避免写出部分可读的超大文件。
@@ -49,6 +50,15 @@ export async function writeStreamingZip(entries, sink, {assertContext = () => {}
       offset += chunk.length;
     }
   };
+  // 仅包装源端读取；取消和目标磁盘写入失败必须保留原错误，避免误删可复用缓存。
+  const readSource = async (entry, operation) => {
+    try { return await operation(); }
+    catch (cause) {
+      if (cause?.code === 'EXTENSION_CONTEXT_INVALIDATED' || cause?.name === 'AbortError' || cause?.code === 'ABORT_ERR' || /extension context invalidated/i.test(cause?.message || '')) throw cause;
+      assertContext();
+      throw Object.assign(new Error(`临时源不可读：${entry.name}。请重新生成该月缓存。`, {cause}), {code: 'ZIP_SOURCE_CHANGED', entryName: entry.name});
+    }
+  };
   onProgress({packedBytes, totalBytes});
   for (const entry of prepared) {
     assertContext();
@@ -56,16 +66,17 @@ export async function writeStreamingZip(entries, sink, {assertContext = () => {}
     local.u32(0, 0x04034b50); local.u16(4, 20); local.u16(6, 0x0808); local.u16(8, 0);
     local.u16(12, 0x0021); local.u16(26, name.length);
     await write(local.bytes); await write(name);
-    const file = await entry.open();
-    if (!file || file.size !== entry.size || typeof file.stream !== 'function') throw new Error(`临时文件已变化：${entry.name}。请重试导出。`);
-    const reader = file.stream().getReader();
+    const file = await readSource(entry, () => entry.open());
+    assertContext();
+    if (!file || file.size !== entry.size || typeof file.stream !== 'function') throw Object.assign(new Error(`临时文件已变化：${entry.name}。请重试导出。`), {code: 'ZIP_SOURCE_CHANGED', entryName: entry.name});
+    const reader = await readSource(entry, () => file.stream().getReader());
     let size = 0, crc = 0xffffffff;
     try {
       while (true) {
         assertContext();
-        const {done, value} = await reader.read();
+        const {done, value} = await readSource(entry, () => reader.read());
         if (done) break;
-        if (!(value instanceof Uint8Array) || size + value.byteLength > entry.size) throw new Error(`临时文件大小不匹配：${entry.name}。`);
+        if (!(value instanceof Uint8Array) || size + value.byteLength > entry.size) throw Object.assign(new Error(`临时文件大小不匹配：${entry.name}。`), {code: 'ZIP_SOURCE_CHANGED', entryName: entry.name});
         size += value.byteLength; crc = updateCrc(crc, value);
         await write(value);
         packedBytes += value.byteLength;
@@ -73,10 +84,11 @@ export async function writeStreamingZip(entries, sink, {assertContext = () => {}
           onProgress({packedBytes, totalBytes}); lastProgressBytes = packedBytes;
         }
       }
+      if (size !== entry.size) throw Object.assign(new Error(`临时文件读取不完整：${entry.name}。`), {code: 'ZIP_SOURCE_CHANGED', entryName: entry.name});
+      crc = (crc ^ 0xffffffff) >>> 0;
+      if (entry.crc32 !== undefined && crc !== entry.crc32) throw Object.assign(new Error(`临时文件 CRC32 校验失败：${entry.name}。请重新生成该月缓存。`), {code: 'ZIP_SOURCE_CRC_MISMATCH', entryName: entry.name});
     } catch (error) { try { await reader.cancel(); } catch { /* 失败清理由调用方处理。 */ } throw error; }
     finally { reader.releaseLock(); }
-    if (size !== entry.size) throw new Error(`临时文件读取不完整：${entry.name}。`);
-    crc = (crc ^ 0xffffffff) >>> 0;
     const descriptor = header(16);
     descriptor.u32(0, 0x08074b50); descriptor.u32(4, crc); descriptor.u32(8, size); descriptor.u32(12, size);
     await write(descriptor.bytes);

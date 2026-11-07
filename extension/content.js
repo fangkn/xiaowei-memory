@@ -175,6 +175,84 @@
     const patterns = [/访问频次过高/, /操作过于频繁/, /访问受限/, /账号异常/, /请完成.{0,8}验证/, /安全验证/, /验证码/, /登录后.{0,8}查看/, /请先登录/];
     return patterns.find(p => p.test(surface))?.source || '';
   }
+  /** 头像只取当前主页或本人作者栏，不能把导航用户、推荐用户或转发头像当成目标账号。 */
+  function profileAvatar(doc, pageURL) {
+    const uid = profileUid(pageURL);
+    if (!uid) return '';
+    const excluded = `${selectors.repost},nav,aside,[role="navigation"],[role="complementary"],[class*="comment" i],[class*="reply" i],[class*="recommend" i],[hidden],[aria-hidden="true"]`;
+    const profileArea = '[class*="ProfileHeader"], [class*="profile-header"], .PCD_header, [data-testid="profile-header"]';
+    const avatarShape = 'img[class*="avatar" i], img[class*="portrait" i], img[class*="headpic" i], [class*="head_avatar"] img, .WB_face img, .m-avatar-box img, .pf_photo img, [data-testid="profile-avatar"] img, img[data-testid="profile-avatar"]';
+    function ownerIds(element, boundary) {
+      const found = new Set();
+      for (let node = element; node; node = node.parentElement) {
+        const usercard = node.getAttribute('usercard') || '';
+        const cardUid = usercard.match(/^\d{4,}$/)?.[0] || usercard.match(/(?:^|[?&])id=(\d{4,})(?:&|$)/)?.[1];
+        const dataUid = node.getAttribute('data-uid');
+        for (const value of [cardUid, /^\d{4,}$/.test(dataUid || '') ? dataUid : '', profileUid(node.getAttribute('href'))]) if (value) found.add(value);
+        if (node === boundary) break;
+      }
+      return found;
+    }
+    function address(img) {
+      for (const raw of [img.getAttribute('data-src'), img.currentSrc, img.getAttribute('src')]) {
+        const value = mediaURL(raw);
+        if (!value) continue;
+        const host = new URL(value).hostname;
+        if (host === 'sinaimg.cn' || host.endsWith('.sinaimg.cn')) return value;
+      }
+      return '';
+    }
+    function eligible(img) {
+      return !img.closest(excluded) && img.matches(avatarShape);
+    }
+    // 明确的主页头像区可没有 UID 链接；一旦页面标注了不同 UID，宁可保留默认头像。
+    for (const img of doc.querySelectorAll(avatarShape)) {
+      if (!eligible(img) || img.closest(selectors.cards)) continue;
+      const area = img.closest(profileArea) || img.closest('.pf_photo, [data-testid="profile-avatar"]');
+      if (!area) continue;
+      const owners = ownerIds(img, null);
+      if ([...owners].some(value => value !== uid)) continue;
+      const url = address(img);
+      if (url) return url;
+    }
+    // 新版 Vue 主页使用带构建哈希的 avatar2 类，不能依赖 ProfileHeader 或用户名链接。
+    // 只接受独立资料面板里的大头像；多个不同候选时留给本人作者栏消歧。
+    const profileCandidates = new Set();
+    for (const img of doc.querySelectorAll('.woo-avatar-main > img.woo-avatar-img')) {
+      if (!eligible(img) || img.closest(selectors.cards)) continue;
+      const wrapper = img.parentElement;
+      if (![...wrapper.classList].some(value => /^_avatar2_[A-Za-z0-9_]+$/.test(value)) || !wrapper.closest('.woo-panel-main')) continue;
+      if ([...ownerIds(img, null)].some(value => value !== uid)) continue;
+      const url = address(img);
+      if (url) profileCandidates.add(url);
+    }
+    if (profileCandidates.size === 1) return [...profileCandidates][0];
+    // 页面头像未出现在 DOM 时，使用 UID 明确匹配的本人微博作者头像作为回退。
+    for (const card of cardElements(doc)) {
+      for (const img of card.querySelectorAll('header img, [class*="head_avatar"] img, .WB_face img, .m-avatar-box img')) {
+        if (!eligible(img) || img.closest(selectors.text)) continue;
+        const owners = ownerIds(img, card);
+        if (!owners.size) {
+          const header = img.closest('header');
+          if (header && card.contains(header)) {
+            for (const author of header.querySelectorAll('a[usercard], a[href]')) {
+              if (!author.closest(excluded)) for (const value of ownerIds(author, header)) owners.add(value);
+            }
+          }
+        }
+        if (owners.size !== 1 || !owners.has(uid)) continue;
+        const url = address(img);
+        if (url) return url;
+      }
+    }
+    return '';
+  }
+  // 轻量资料读取不解析正文、不点击展开、不滚动，供头像延迟挂载后补取。
+  function profile(doc = document, pageURL = location.href, cardsCount = cardElements(doc).length) {
+    const pageUid = profileUid(pageURL);
+    const pageName = pageUid ? normalizeSpace(doc.title).replace(/的微博(?:[ _-]*微博)?$|\s*[-–—_]\s*微博$|^微博$/, '').trim() : '';
+    return { ok: true, diagnostics: { pageUid, pageName, pageAvatar: profileAvatar(doc, pageURL), restricted: restriction(doc, cardsCount) } };
+  }
   function scan(doc = document, pageURL = location.href, now = Date.now()) {
     const cards = cardElements(doc);
     const posts = [];
@@ -185,8 +263,7 @@
         if (post) posts.push(post); else unparsed++;
       } catch { unparsed++; }
     }
-    const pageName = profileUid(pageURL) ? normalizeSpace(doc.title).replace(/的微博(?:[ _-]*微博)?$|\s*[-–—_]\s*微博$|^微博$/, '').trim() : '';
-    return { ok: true, posts, diagnostics: { cards: cards.length, unparsed, restricted: restriction(doc, cards.length), url: pageURL, pageUid: profileUid(pageURL), pageName, identityPolicy:'纯数字帖子链接无法确认是否为永久链接 ID，计入未解析而不猜测转换' } };
+    return { ok: true, posts, diagnostics: { cards: cards.length, unparsed, ...profile(doc, pageURL, cards.length).diagnostics, url: pageURL, identityPolicy:'纯数字帖子链接无法确认是否为永久链接 ID，计入未解析而不猜测转换' } };
   }
   function expand(doc = document) {
     let count = 0;
@@ -209,14 +286,14 @@
     win.scrollBy({ top: Math.max(250, Math.floor(win.innerHeight * 0.8)), behavior: 'instant' });
     return { ok: true, atBottom: root.scrollTop + win.innerHeight >= root.scrollHeight - 8 };
   }
-  const adapter = { normalizeSpace, safeURL, mediaURL, permalink, profileUid, parseDate, textOf, emoticonsOf, cardElements, readCard, scan, expand, scroll };
+  const adapter = { normalizeSpace, safeURL, mediaURL, permalink, profileUid, parseDate, textOf, emoticonsOf, cardElements, readCard, profileAvatar, profile, scan, expand, scroll };
   globalThis.WOBAdapter = adapter;
   if (typeof module !== 'undefined' && module.exports) module.exports = adapter;
   if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-      if (!['WOB_SCAN', 'WOB_EXPAND', 'WOB_SCROLL'].includes(message?.type)) return false;
+      if (!['WOB_SCAN', 'WOB_PROFILE', 'WOB_EXPAND', 'WOB_SCROLL'].includes(message?.type)) return false;
       try {
-        sendResponse(message.type === 'WOB_SCAN' ? scan() : message.type === 'WOB_EXPAND' ? expand() : scroll());
+        sendResponse(message.type === 'WOB_SCAN' ? scan() : message.type === 'WOB_PROFILE' ? profile() : message.type === 'WOB_EXPAND' ? expand() : scroll());
       } catch (error) { sendResponse({ ok: false, error: String(error?.message || error) }); }
       return false;
     });

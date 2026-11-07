@@ -77,6 +77,9 @@ function harness({posts = [post('Own1')], selection = '2026-11', images = false,
     document: {getElementById: $, createElement: tag => element(tag)},
     URL: MockURL, Blob, Uint8Array, Map, Set, TextEncoder, TextDecoder, Date, crypto,
     setTimeout() {}, console,
+    async buildCombinedPdf(batches, options) {
+      return context.buildMonthlyPdf({uid: UID, month: 'combined', posts: batches.flatMap(batch => batch.posts)}, options);
+    },
     async buildMonthlyPdf(batch, options) {
       calls.pdfs.push({batch: structuredClone(batch), options: {images: options.images, urls: [...options.media.keys()]}});
       if (batch.month === invalidateDuringMonth) contextInvalidated = true;
@@ -89,6 +92,9 @@ function harness({posts = [post('Own1')], selection = '2026-11', images = false,
         attachmentFailures: typeof attachmentFailures === 'function' ? attachmentFailures(batch) : attachmentFailures};
     },
     db: {
+      async mergeSetting(key, entries) {
+        await this.put('settings', {...settings.get(key), ...entries}, key);
+      },
       async get(store, key) { calls.operations.push('db-read'); calls.reads.push({store, key}); return structuredClone(settings.get(key)); },
       async all(store) { assert.equal(store, 'posts'); return structuredClone(posts); },
       async put(store, value, key) {
@@ -282,6 +288,58 @@ test('all-month export downloads one ZIP with one PDF per nonempty original mont
   assert.ok(pdfs.some(entry => /2026-11-originals\.pdf$/.test(entry.name)));
   assert.ok(pdfs.every(entry => new TextDecoder().decode(entry.data).startsWith('%PDF-')));
   assert.deepEqual(Array.from(h.pending().batches, batch => batch.month), ['2026-10', '2026-11']);
+});
+
+test('combined PDF downloads once, filters reposts, and confirms all selected months in its own ledger', async () => {
+  const h = harness({format: 'pdf-combined', selection: 'all', posts: [post('OwnNov'), post('OwnOct', '2026-10'), post('Repost', '2026-10', {isRepost: true}), post('Other', '2026-11', {uid: '9999999999'})]});
+  await h.run();
+  assert.equal(h.calls.pdfs.length, 1);
+  assert.deepEqual(h.calls.pdfs[0].batch.posts.map(p => p.id), ['OwnOct', 'OwnNov']);
+  assert.equal(h.calls.downloads.length, 1);
+  assert.match(h.calls.downloads[0].filename, /\.pdf$/);
+  assert.equal(h.calls.blobs[0].type, 'application/pdf');
+  assert.match(h.$('exportStatus').textContent, /一个 PDF/);
+  assert.doesNotMatch(h.$('exportStatus').textContent, /ZIP|解压/);
+  assert.equal(h.calls.writes.length, 0);
+  const key = monthly.monthLedgerKey(UID, {format: 'pdf-combined', originalOnly: true});
+  assert.equal(h.pending().ledgerKey, key);
+  await h.confirm();
+  assert.equal(h.ui.state.phase, 'done');
+  assert.deepEqual(Object.keys(h.settings.get(key)), ['2026-10', '2026-11']);
+  assert.equal(h.settings.has(monthly.monthLedgerKey(UID, {format: 'pdf', originalOnly: true})), false);
+});
+
+test('combined PDF keeps previously exported months and respects the chosen month range', async () => {
+  const posts = [post('OwnNov'), post('OwnOct', '2026-10'), post('OwnSep', '2026-09')];
+  const h = harness({format: 'pdf-combined', selection: 'all', posts});
+  h.$('from').value = '2026-10';
+  h.$('to').value = '2026-11';
+  h.$('incremental').checked = true;
+  const batches = await monthly.selectMonthlyBatches(posts, {uid: UID, format: 'pdf-combined', originalOnly: true});
+  h.settings.set(monthly.monthLedgerKey(UID, h.options()), Object.fromEntries(batches.map(batch => [batch.month, batch.revision])));
+  await h.run();
+  assert.deepEqual(h.calls.pdfs[0].batch.posts.map(p => p.id), ['OwnOct', 'OwnNov']);
+  assert.deepEqual(Array.from(h.pending().batches, batch => batch.month), ['2026-10', '2026-11']);
+});
+
+test('combined PDF shares current image and emoticon preparation and requires complete attachments before confirmation', async () => {
+  const face = 'https://wx1.sinaimg.cn/emoticon/smile.png';
+  const h = harness({format: 'pdf-combined', selection: 'all', images: true, pdfFailures: 1, posts: [
+    post('OwnNov', '2026-11', {images: [imageUrl], emoticons: [{text: '[笑]', url: face}], versions: [post('OwnNov', '2026-11', {images: [versionImageUrl]})]}),
+    post('OwnOct', '2026-10', {images: [imageUrl]}),
+  ]});
+  await h.run();
+  assert.deepEqual(h.calls.fetches, [imageUrl, face]);
+  assert.equal(h.ui.state.canConfirm, false);
+  assert.equal(h.pending().batches.length, 0, 'an incomplete combined PDF cannot confirm even a subset of its months');
+  await assert.rejects(h.confirm(), /图片|附件/);
+  assert.match(h.$('exportStatus').textContent, /重新生成合并 PDF/);
+  h.clearMediaFailure();
+  await h.run();
+  assert.equal(h.calls.pdfs.length, 2);
+  assert.equal(h.ui.state.canConfirm, true);
+  await h.confirm();
+  assert.equal(h.calls.writes.length, 1);
 });
 
 test('PDF image preparation reads current original images without fetching historical version images', async () => {

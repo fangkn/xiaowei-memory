@@ -19,7 +19,7 @@ for(const icons of [m.icons,m.action.default_icon]){
     if(png.subarray(0,8).toString('hex')!=='89504e470d0a1a0a'||png.readUInt32BE(16)!==size||png.readUInt32BE(20)!==size)throw new Error(`Invalid PNG icon: ${file}`);
   }
 }
-for(const f of ['dashboard.js','browser-export.js','media-data.js','media-referrer.js','export-runner.js','export-files.js','zip-stream.js','content.js','archive.js','db.js','model.js','floating-panel.js','panel-ui.js','wizard-state.js','monthly-pdf.js','vendor/pdf-lib.esm.min.js','vendor/fontkit.esm.min.js','fonts/NotoSansSC-Regular.ttf'])if(!readFileSync(`${extension}/${f}`).length)throw new Error(`Missing ${f}`);
+for(const f of ['dashboard.js','browser-export.js','media-data.js','media-referrer.js','export-runner.js','export-files.js','zip-stream.js','zip-reader.js','content.js','archive.js','db.js','model.js','floating-panel.js','panel-ui.js','wizard-state.js','monthly-pdf.js','vendor/pdf-lib.esm.min.js','vendor/fontkit.esm.min.js','fonts/NotoSansSC-Regular.ttf'])if(!readFileSync(`${extension}/${f}`).length)throw new Error(`Missing ${f}`);
 const html=readFileSync(`${extension}/dashboard.html`,'utf8');
 if(!html.includes(`<span class="version">v${m.version}</span>`))throw new Error('Dashboard version must match the manifest');
 const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(match=>match[1]);

@@ -3,6 +3,7 @@ import {normalizeExportMediaURL} from './media-data.js';
 /** Pure, dependency-free monthly Markdown and ZIP export. Inputs are untrusted. */
 const encoder = new TextEncoder();
 export const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024;
+export const MONTH_DIRECTORY_LAYOUT = 'month-directory-v2';
 const MIME_EXTENSIONS = new Map([['image/jpeg','jpg'],['image/png','png'],['image/gif','gif'],['image/webp','webp'],['image/avif','avif']]);
 const yaml = value => JSON.stringify(String(value ?? ''));
 const escapeText = value => String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/([\\`*_{}\[\]()#!|~^])/g,'\\$1');
@@ -40,16 +41,19 @@ function sanitizeReport(report={}){
   if(Array.isArray(report.failures))out.attachmentFailures=report.failures.map(f=>({url:imageUrl(f.url),reason:String(f.reason||'未知失败').slice(0,500)}));return out;
 }
 function comparePosts(a,b){const da=dateParts(a.createdAt),db=dateParts(b.createdAt);return (da?.time??Infinity)-(db?.time??Infinity)||String(a.id).localeCompare(String(b.id))}
-function noteHeader(group,history,count){return ['---','platform: "weibo"','archive_layout: "monthly-v1"',`author_uid: ${yaml(group.uid)}`,`month: ${yaml(group.month)}`,`note_type: ${yaml(history?'history-observations':'monthly-current')}`,`entry_count: ${count}`,'timezone: "Asia/Shanghai"','all_history_guaranteed: false','---','',`# ${group.month==='unknown'?'未知日期':group.month} · 微博${history?'历史观察':'备份'}`,'',history?'这里保留本月当前记录关联的旧版本与不完整观察；每条仍显示其原始发布时间。不代表源站完整编辑历史。':'本页汇总该月当前已保存的微博，按北京时间从早到晚排列。视频文件和评论区未包含。','', '此文件是独立备份快照，不会自动合并 Obsidian 批注；再次导入前请备份或另存旧文件。',''].join('\n')}
+function noteHeader(group,history,count,layout){return ['---','platform: "weibo"',`archive_layout: ${yaml(layout)}`,`author_uid: ${yaml(group.uid)}`,`month: ${yaml(group.month)}`,`note_type: ${yaml(history?'history-observations':'monthly-current')}`,`entry_count: ${count}`,'timezone: "Asia/Shanghai"','all_history_guaranteed: false','---','',`# ${group.month==='unknown'?'未知日期':group.month} · 微博${history?'历史观察':'备份'}`,'',history?'这里保留本月当前记录关联的旧版本与不完整观察；每条仍显示其原始发布时间。不代表源站完整编辑历史。':'本页汇总该月当前已保存的微博，按北京时间从早到晚排列。视频文件和评论区未包含。','', '此文件是独立备份快照，不会自动合并 Obsidian 批注；再次导入前请备份或另存旧文件。',''].join('\n')}
 
-export function buildArchiveEntries({posts=[],media=new Map(),report={}}={}){
+export function buildArchiveEntries({posts=[],media=new Map(),report={},layout='monthly-v1'}={}){
   if(!Array.isArray(posts))throw new Error('posts 必须是数组');if(!(media instanceof Map))throw new Error('media 必须是 Map');
-  const entries=[],records=[],groups=new Map(),seen=new Set(),imagesRequested=report.mode!=='text-only';
-  for(const post of posts){const uid=safeId(post.uid,'账号 UID'),id=safeId(post.id,'微博 ID'),identity=`${uid}:${id}`;if(seen.has(identity))continue;seen.add(identity);const date=dateParts(post.createdAt),month=date?.month||'unknown',key=`${uid}:${month}`;if(!groups.has(key))groups.set(key,{uid,month,year:date?.year,posts:[]});groups.get(key).posts.push(post)}
+  if(!['monthly-v1','month-directory'].includes(layout))throw new Error('不支持的 Markdown 归档布局');
+  const monthDirectory=layout==='month-directory',archiveLayout=monthDirectory?MONTH_DIRECTORY_LAYOUT:'monthly-v1';
+  const entries=[],records=[],groups=new Map(),seen=new Set(),scopes=new Set(),imagesRequested=report.mode!=='text-only';
+  for(const post of posts){const uid=safeId(post.uid,'账号 UID'),id=safeId(post.id,'微博 ID'),identity=`${uid}:${id}`,date=dateParts(post.createdAt),month=date?.month||'unknown',key=`${uid}:${month}`;scopes.add(key);if(seen.has(identity))continue;seen.add(identity);if(!groups.has(key))groups.set(key,{uid,month,year:date?.year,posts:[]});groups.get(key).posts.push(post)}
+  if(monthDirectory&&scopes.size!==1)throw new Error('月份目录归档必须包含同一账号同一个月的非空快照');
   const monthRecords=[];
   for(const group of [...groups.values()].sort((a,b)=>a.uid.localeCompare(b.uid)||a.month.localeCompare(b.month))){
-    group.posts.sort(comparePosts);const root=`微博备份/${group.uid}`,file=group.month==='unknown'?'未知日期':group.month;
-    const folder=group.year?`${root}/${group.year}`:root,notePath=`${folder}/${file}.md`,historyPath=`${folder}/${file}-history.md`,relativeBase=group.year?'../':'';
+    group.posts.sort(comparePosts);const file=group.month==='unknown'?'未知日期':group.month,root=monthDirectory?file:`微博备份/${group.uid}`;
+    const folder=!monthDirectory&&group.year?`${root}/${group.year}`:root,notePath=`${folder}/${file}.md`,historyPath=`${folder}/${file}-history.md`,relativeBase=!monthDirectory&&group.year?'../':'';
     const currentFragments=[],historyFragments=[];
     const addEntry=(post,versionIndex=0)=>{
       const id=safeId(post.id,'微博 ID'),assetId=versionIndex?`${id}/versions/${versionIndex}`:id,images=[],failures=[];
@@ -64,13 +68,14 @@ export function buildArchiveEntries({posts=[],media=new Map(),report={}}={}){
       records.push({id,uid:group.uid,month:group.month,version,path,anchor,source:sourceUrl(post.url),createdAt:post.createdAt||null,fullText:post.fullText===true,observationOnly:post.observationOnly===true,referencedImages:[...new Set(post.images||[])].length,requestedImages:imagesRequested?[...new Set(post.images||[])].length:0,savedImages:images.length,failedImages:failures});
     };
     for(const post of group.posts){addEntry(post);for(const [i,version]of(Array.isArray(post.versions)?post.versions:[]).entries())addEntry({...version,id:post.id,uid:post.uid},i+1)}
-    entries.push({name:notePath,data:noteHeader(group,false,currentFragments.length)+currentFragments.join('\n\n---\n\n')});
-    if(historyFragments.length)entries.push({name:historyPath,data:noteHeader(group,true,historyFragments.length)+historyFragments.join('\n\n---\n\n')});
+    entries.push({name:notePath,data:noteHeader(group,false,currentFragments.length,archiveLayout)+(monthDirectory&&historyFragments.length?`\n[查看本月历史观察](${file}-history.md)\n\n`:'')+currentFragments.join('\n\n---\n\n')});
+    if(historyFragments.length)entries.push({name:historyPath,data:noteHeader(group,true,historyFragments.length,archiveLayout)+(monthDirectory?`\n[返回本月主笔记](${file}.md)\n\n`:'')+historyFragments.join('\n\n---\n\n')});
     monthRecords.push({uid:group.uid,month:group.month,path:notePath,postCount:currentFragments.length,historyPath:historyFragments.length?historyPath:null,historyCount:historyFragments.length});
   }
-  const manifest={schemaVersion:2,archiveLayout:'monthly-v1',...sanitizeReport(report),mainNoteCount:monthRecords.length,historyNoteCount:monthRecords.filter(m=>m.historyPath).length,months:monthRecords,exportedPostCount:records.filter(r=>!r.version).length,exportedVersionCount:records.filter(r=>r.version).length,completeTextCount:records.filter(r=>r.fullText).length,savedImageCount:records.reduce((n,r)=>n+r.savedImages,0),failedImageCount:records.reduce((n,r)=>n+r.failedImages.length,0),allHistoryGuaranteed:false,videoFilesIncluded:false,records};
-  entries.push({name:'微博备份/manifest.json',data:JSON.stringify(manifest,null,2)});
-  entries.push({name:'微博备份/导入说明.md',data:'# 每月一篇微博备份\n\n将此文件夹放入 Obsidian 仓库，保留 assets 相对目录。每个已知月份只有一篇主笔记；未知日期集中在 未知日期.md，不猜测归月。\n\n条目带稳定块 ID，可用 [[月笔记路径#^块ID]] 引用。每月的 -history.md 保存该月当前记录关联的旧版本/不完整观察，不是源站全部编辑历史。\n\n月增量导出应包含该月本地当前已保存的完整集合，而非仅新增几条；并不证明源站月份已完整抓取。再次导入前请新建快照目录，或先备份旧文件再手工合并。不要直接覆盖写过批注的月笔记，本工具不自动合并批注。\n\nmanifest.json 列出本包月份、条目、正文完整性与图片失败。视频文件和评论区不在备份内。正文按转义文字保存，不执行原页面 HTML，不加载缺失图片的远程外链。\n'});
+  const manifest={schemaVersion:2,archiveLayout,...sanitizeReport(report),mainNoteCount:monthRecords.length,historyNoteCount:monthRecords.filter(m=>m.historyPath).length,months:monthRecords,exportedPostCount:records.filter(r=>!r.version).length,exportedVersionCount:records.filter(r=>r.version).length,completeTextCount:records.filter(r=>r.fullText).length,savedImageCount:records.reduce((n,r)=>n+r.savedImages,0),failedImageCount:records.reduce((n,r)=>n+r.failedImages.length,0),allHistoryGuaranteed:false,videoFilesIncluded:false,records};
+  const metadataRoot=monthDirectory?(monthRecords[0].month==='unknown'?'未知日期':monthRecords[0].month):'微博备份';
+  entries.push({name:`${metadataRoot}/manifest.json`,data:JSON.stringify(manifest,null,2)});
+  entries.push({name:`${metadataRoot}/导入说明.md`,data:'# 每月一篇微博备份\n\n'+(monthDirectory?'每个月是一个独立目录，目录内有主笔记、可选的历史观察笔记、assets 图片目录和本月清单。解压一次即可阅读；请整体保留月份目录。\n\n':'')+'将此文件夹放入 Obsidian 仓库，保留 assets 相对目录。每个已知月份只有一篇主笔记；未知日期集中在 未知日期.md，不猜测归月。\n\n条目带稳定块 ID，可用 [[月笔记路径#^块ID]] 引用。每月的 -history.md 保存该月当前记录关联的旧版本/不完整观察，不是源站全部编辑历史。\n\n月增量导出应包含该月本地当前已保存的完整集合，而非仅新增几条；并不证明源站月份已完整抓取。再次导入前请新建快照目录，或先备份旧文件再手工合并。不要直接覆盖写过批注的月笔记，本工具不自动合并批注。\n\nmanifest.json 列出本包月份、条目、正文完整性与图片失败。视频文件和评论区不在备份内。正文按转义文字保存，不执行原页面 HTML，不加载缺失图片的远程外链。\n'});
   return entries;
 }
 const crcTable = new Uint32Array(256);

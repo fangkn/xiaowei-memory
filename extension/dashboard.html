@@ -10,7 +10,7 @@
 <body>
 <main id="backupPanel">
   <header class="panel-header">
-    <div class="brand"><img class="brand-logo" src="icons/logo.svg" width="20" height="20" alt="" aria-hidden="true"><span>小微记忆</span><span class="version">v0.7.4</span></div>
+    <div class="brand"><img class="brand-logo" src="icons/logo.svg" width="20" height="20" alt="" aria-hidden="true"><span>小微记忆</span><span class="version">v0.7.6</span></div>
     <div class="window-actions">
       <a id="panelHelp" class="icon-button" href="https://github.com/fangkn/xiaowei-memory" target="_blank" rel="noopener noreferrer" aria-label="打开小微记忆 GitHub 项目（新标签页）" title="项目主页与使用帮助（新标签页）"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9a2.5 2.5 0 0 1 5 .2c0 1.8-2.5 2-2.5 3.8M12 16.5v.1"/></svg></a>
       <button id="panelMinimize" class="icon-button" type="button" aria-label="最小化备份面板" title="最小化，任务继续运行"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12h12"/></svg></button>
@@ -32,7 +32,7 @@
 
     <section id="step-account" data-wizard-step="1" aria-label="确认账号">
       <div class="account-row">
-        <span class="account-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5"/><path d="M5 20v-2a7 7 0 0 1 14 0v2"/></svg></span>
+        <span class="account-avatar" aria-hidden="true"><img id="accountAvatar" alt="" referrerpolicy="no-referrer" decoding="async" hidden><svg id="accountAvatarFallback" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5"/><path d="M5 20v-2a7 7 0 0 1 14 0v2"/></svg></span>
         <div class="account-copy"><strong id="accountName">正在识别账号</strong><span id="accountUid">请稍候</span></div>
         <button id="connect" class="text-button" type="button">重新识别</button>
       </div>
@@ -71,7 +71,7 @@
 
     <section id="step-progress" data-wizard-step="3" aria-label="备份进度" hidden>
       <div class="capture-count"><strong id="collectedCount">0</strong><span>条原创已保存</span></div>
-      <div id="pageProgress" class="collection-progress" role="progressbar" aria-label="页面采集进度" aria-valuetext="等待采集，微博总数未知" data-active="false"></div>
+      <div id="pageProgress" class="collection-progress" role="progressbar" aria-label="本轮页面采集进度" aria-valuemin="0" aria-valuemax="1" aria-valuetext="等待采集，微博总数未知" data-active="false" data-state="idle" hidden></div>
       <progress id="historyProgress" class="collection-progress" value="0" max="1" aria-label="所选月份遍历进度" hidden></progress>
       <p id="progressSummary" class="progress-summary" role="status" aria-live="polite">正在准备读取微博…</p>
       <div id="historyProgressInfo" hidden>
@@ -85,18 +85,18 @@
 
     <section id="step-export" data-wizard-step="4" aria-label="导出备份" hidden>
       <div id="exportReady">
-        <p class="export-summary"><strong id="total">0</strong> 条原创，每个月一份文件。</p>
+        <p class="export-summary"><strong id="total">0</strong> 条原创，<span id="exportLayoutHint">每个月一份文件。</span></p>
         <label class="field-label">导出月份<select id="batch"><option value="">没有待导出的月份</option></select></label>
         <label class="checkbox-label image-option"><input id="images" type="checkbox" checked>包含图片</label>
         <details class="options-details"><summary>更多导出选项</summary><div class="details-body">
-          <label class="field-label">文件格式<select id="format"><option value="pdf" selected>PDF（每月一份）</option><option value="markdown">Markdown + 图片（ZIP）</option></select></label>
+          <label class="field-label">文件格式<select id="format"><option value="pdf" selected>PDF（每月一份）</option><option value="pdf-combined">PDF（全部合成一份）</option><option value="markdown">Markdown + 图片（ZIP）</option></select></label>
           <div class="month-range"><label>起始月份<input id="from" type="month"></label><label>结束月份<input id="to" type="month"></label></div>
-          <label class="checkbox-label"><input id="incremental" type="checkbox">只显示新增 / 有变化的月份</label>
+          <label id="incrementalOption" class="checkbox-label"><input id="incremental" type="checkbox">只显示新增 / 有变化的月份</label>
           <p class="hint quality-note">正文可能不全 <strong id="partial">0</strong> 条 · 日期未知 <strong id="unknown">0</strong> 条</p>
           <p id="legacyWarning" class="hint warning-text"></p>
-          <p class="hint">只导出本机保存的原创，已过滤转发。日期不明的内容单独成册，不猜测月份。</p>
+          <p id="exportScopeHint" class="hint">只导出本机保存的原创，已过滤转发。日期不明的内容单独成册，不猜测月份。</p>
         </div></details>
-        <p class="hint export-destination">每个月生成一份文件，全部完成后打包下载。生成期间可最小化。</p>
+        <p id="exportDestination" class="hint export-destination">每个月生成一份文件，全部完成后打包下载。生成期间可最小化。</p>
         <div id="exportProgressInfo" class="export-progress-info" hidden>
           <div class="export-progress-label"><span id="exportProgressLabel">准备导出…</span><span id="exportProgressPercent">0%</span></div>
           <progress id="exportProgress" class="collection-progress" max="1" value="0" aria-label="整体导出进度"></progress>

@@ -6,9 +6,9 @@ import {createHistoryTask,historyTaskKey,runHistoryTask,historyCoverage} from '.
 import {requestFromTab,htmlToText,htmlToEmoticons} from './history-bridge.js';
 import {savePostRecord} from './record-store.js';
 import {selectMonthlyBatches,monthLedgerKey,verifyMonthlyArchive} from './monthly.js';
-import {embedded,panelMessage,setupPanelUI} from './panel-ui.js';
+import {embedded,panelMessage,setupPanelUI,accountAvatarURL} from './panel-ui.js';
 import {isWizardBusy} from './wizard-state.js';
-import {buildMonthlyPdf} from './monthly-pdf.js';
+import {buildMonthlyPdf,buildCombinedPdf} from './monthly-pdf.js';
 import {requestImagePermission,downloadExport,exportDownloadState,assertExtensionContext,normalizeExtensionError,requestExportMedia} from './browser-export.js';
 import {exportJobKey,createExportJob,matchesExportJob,completedExportMonths,generatedExportMonths,runExportJob,cleanupExportJob} from './export-runner.js';
 import {usableExportMedia,normalizeExportMediaURL} from './media-data.js';
@@ -16,14 +16,15 @@ import {mediaFailureDetails,enrichMediaFailures,formatExportFailures} from './me
 const $=id=>document.getElementById(id);
 const panelUI=setupPanelUI();
 let tabId=embedded?null:Number(new URL(location.href).searchParams.get('tab'))||null;
-let uid='',running=false,exporting=false,generation=0,latestScan=null,pendingExport=null,historyTask=null,refreshVersion=0,exportRestoreVersion=0;
+let uid='',running=false,exporting=false,generation=0,latestScan=null,pendingExport=null,historyTask=null,refreshVersion=0,exportRestoreVersion=0,connectionVersion=0;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const status=text=>{$('status').textContent=text;if(panelUI.state.step===3)$('progressSummary').textContent=text};
-const options=()=>({from:$('from').value,to:$('to').value,includeReposts:false,originalOnly:true,format:$('format').value==='markdown'?'markdown':'pdf',images:$('images').checked,autoScroll:$('scroll').checked});
+const options=()=>({from:$('from').value,to:$('to').value,includeReposts:false,originalOnly:true,format:['pdf','pdf-combined','markdown'].includes($('format').value)?$('format').value:'pdf',images:$('images').checked,autoScroll:$('scroll').checked});
 async function saveOptions(){await db.put('settings',options(),'options')}
 function activeControls(){const busy=running||exporting||isWizardBusy(panelUI.state);for(const id of ['connect','format','from','to','scroll','top','images','incremental','batch','historyFrom','historyTo','ownAccount','historyDirectory','historyRestart'])$(id).disabled=busy;panelUI.setActivity(running,exporting);}
 async function send(type){if(!tabId)throw new Error('请在微博账号主页点击扩展图标。');return chrome.tabs.sendMessage(tabId,{type},{frameId:0});}
 async function connect(){
+  const version=++connectionVersion;
   panelUI.dispatch({type:'CONNECTION',connected:false});
   if(!tabId)throw new Error('没有目标标签页。请回到微博账号主页，点击扩展图标。');
   let profileUrl;
@@ -38,22 +39,53 @@ async function connect(){
       profileUrl = frame?.result;
     }
   } catch {
+    if(version!==connectionVersion)return false;
     throw new Error('无法读取微博标签页。请刷新微博个人主页，再点击工具栏里的本扩展。');
   }
+  if(version!==connectionVersion)return false;
   if (!profileUrl) throw new Error('浏览器未返回原标签页地址。请从微博个人主页的浏览器工具栏重新打开本扩展。');
   if (!validProfile(profileUrl)) {
     throw new Error('当前是微博首页或其他页面，请先点击自己的头像进入个人主页。');
   }
   await chrome.scripting.executeScript({target:{tabId,frameIds:[0]},files:['content.js']});
   const scan=await send('WOB_SCAN');
+  if(version!==connectionVersion)return false;
   if(!scan?.ok)throw new Error(scan?.error||'页面识别失败，请刷新微博后重试。');
   if(scan.diagnostics?.restricted)throw new Error('页面提示登录、验证或访问限制，请在微博页面处理后重试。');
   if(!scan.diagnostics?.pageUid)throw new Error('没有可靠识别账号 UID，请使用数字 UID 主页。');
-  if(uid!==String(scan.diagnostics.pageUid)){$('ownAccount').checked=false;pendingExport=null;$('confirmExport').disabled=true;}
-  uid=String(scan.diagnostics.pageUid);$('uid').value=uid;latestScan=scan.diagnostics;
-  panelUI.setAccount(uid,scan.diagnostics.pageName);
-  await db.put('settings',{uid,name:scan.diagnostics.pageName||'',url:profileUrl,connectedAt:new Date().toISOString()},'target');
+  const ownerUid=String(scan.diagnostics.pageUid);
+  const previousTarget=await db.get('settings','target');
+  if(version!==connectionVersion)return false;
+  if(uid!==ownerUid){$('ownAccount').checked=false;pendingExport=null;$('confirmExport').disabled=true;}
+  uid=ownerUid;$('uid').value=ownerUid;latestScan=scan.diagnostics;
+  const avatar=accountAvatarURL(scan.diagnostics.pageAvatar)||accountAvatarURL(previousTarget?.uid===ownerUid?previousTarget.avatar:'');
+  panelUI.setAccount(ownerUid,scan.diagnostics.pageName,false,avatar);
+  await db.put('settings',{uid:ownerUid,name:scan.diagnostics.pageName||'',avatar,url:profileUrl,connectedAt:new Date().toISOString()},'target');
+  if(version!==connectionVersion)return false;
   status('');await refresh();
+  if(version===connectionVersion&&!accountAvatarURL(scan.diagnostics.pageAvatar))void recoverAccountAvatar(ownerUid,version);
+  return version===connectionVersion;
+}
+// 微博资料异步挂载：只补取账号资料，不展开、滚动或开始采集。
+async function updateAccountAvatar(diagnostics, owner=uid, version=connectionVersion){
+  if(version!==connectionVersion||owner!==uid||diagnostics?.restricted||String(diagnostics?.pageUid)!==owner)return false;
+  const avatar=accountAvatarURL(diagnostics.pageAvatar);
+  if(!avatar)return false;
+  panelUI.setAccountAvatar(owner,avatar);
+  // 头像缓存失败不应中断正文采集；事务内核对 UID，避免覆盖另一个浮窗的账号。
+  try{await db.saveTargetAvatar(owner,avatar)}catch{}
+  return version===connectionVersion&&owner===uid;
+}
+async function recoverAccountAvatar(owner,version){
+  try{
+    for(const delay of [500,1000,2000,4000,8000]){
+      await sleep(delay);
+      if(version!==connectionVersion||owner!==uid)return;
+      const result=await send('WOB_PROFILE');
+      if(version!==connectionVersion||owner!==uid||!result?.ok||result.diagnostics?.restricted||String(result.diagnostics?.pageUid)!==owner)return;
+      if(await updateAccountAvatar(result.diagnostics,owner,version))return;
+    }
+  }catch{/* 页面关闭、扩展更新或连接失效时停止补取，不影响已保存内容。 */}
 }
 async function exportSelection({owner=uid,opts=options(),incremental=$('incremental').checked,posts=null}={}){
   const ledger=await db.get('settings',monthLedgerKey(owner,opts))||{};
@@ -70,7 +102,7 @@ async function refresh(){
   $('total').textContent=posts.length;$('partial').textContent=posts.filter(p=>!p.fullText).length;$('unknown').textContent=originals.filter(p=>!p.createdAt).length;
   const old=$('batch').value;
   $('batch').replaceChildren(...list.map(batch=>{const el=document.createElement('option');el.value=batch.month;el.textContent=`${batch.month==='unknown'?'未知日期':batch.month} · ${batch.posts.length} 条原创`;return el}));
-  if(list.length>1){const option=document.createElement('option');option.value='all';option.textContent=`全部月份 · ${list.length} 份${opts.format==='pdf'?' PDF':'月笔记'}`;$('batch').prepend(option)}
+  if(list.length>1){const option=document.createElement('option');option.value='all';option.textContent=opts.format==='pdf-combined'?`全部月份 · ${list.length} 个月合成 1 份 PDF`:`全部月份 · ${list.length} 份${opts.format==='pdf'?' PDF':'月笔记'}`;$('batch').prepend(option)}
   if(!list.length){const empty=document.createElement('option');empty.value='';empty.textContent='没有待导出的月份';$('batch').append(empty)}
   else if(old==='all'&&list.length>1||list.some(g=>g.month===old))$('batch').value=old;
   if(list.length>1&&(!old||panelUI.state.step!==4))$('batch').value='all';
@@ -79,6 +111,7 @@ async function refresh(){
   if(panelUI.state.step===4&&!isWizardBusy(panelUI.state)&&!pendingExport)await restoreExportProgress();
 }
 async function scanOnce(seen=new Set()){
+  const owner=uid,version=connectionVersion;
   await send('WOB_EXPAND');await sleep(700);
   const scan=await send('WOB_SCAN');if(!scan?.ok)throw new Error('微博页面读取失败。');
   if(scan.diagnostics?.restricted)throw new Error('微博要求登录/验证或限制了访问。已暂停，请到微博页面处理。');
@@ -88,29 +121,38 @@ async function scanOnce(seen=new Set()){
     if(String(p.uid)!==uid){other++;continue}
     if(!p.id||!/^[a-zA-Z0-9_-]+$/.test(String(p.id)))continue;
     const key=postKey(p);if(!seen.has(key)){seen.add(key);discovered++}
-    if(!isOriginalPost(p)){reposts++;continue}
+    if(!isOriginalPost(p)){
+      await savePostRecord(db,p,{onlyExisting:true});
+      reposts++;
+      continue;
+    }
     const old=await db.get('posts',key);
     const merged=await savePostRecord(db,p);
     if(!old)added++;else if(old.contentHash!==merged.contentHash)changed++;
   }
   latestScan={...scan.diagnostics,scannedAt:new Date().toISOString(),added,changed,otherAccountIgnored:other,repostsFiltered:reposts};
+  await updateAccountAvatar(scan.diagnostics,owner,version);
   await db.put('settings',{uid,status:'running',diagnostics:latestScan},`task:${uid}`);await refresh();return {updates:added+changed,discovered,reposts};
 }
 async function start(){
-  if(running||exporting)return;
-  await navigator.locks.request('weibo-backup-collection',{ifAvailable:true},async lock=>{
-    if(!lock){status('另一个备份管理页正在采集，请先在那一页暂停。');return}
+  if(running||exporting)return 'paused';
+  return navigator.locks.request('weibo-backup-collection',{ifAvailable:true},async lock=>{
+    if(!lock){status('另一个备份管理页正在采集，请先在那一页暂停。');return 'paused'}
     running=true;generation++;const token=generation;panelUI.dispatch({type:'STARTED'});status('正在读取页面上的微博…');activeControls();let stagnant=0,round=0;const seen=new Set();
+    let outcome='paused';
     try{
       while(running&&token===generation){
         const {updates,discovered,reposts}=await scanOnce(seen);round++;stagnant=updates||discovered?0:stagnant+1;
         if(!running||token!==generation)break;
         status(`已读取第 ${round} 屏 · 新增或更新 ${updates} 条原创${reposts?` · 跳过 ${reposts} 条转发`:''}`);
-        if(!$('scroll').checked){status('本屏内容已保存，可以继续采集或导出。');break}
-        if(stagnant>=6){status('暂时没有新微博，已暂停。可继续采集或导出已有内容。');break}
+        if(!$('scroll').checked){outcome='ready';status('本屏内容已保存，可以继续采集或导出。');break}
+        if(stagnant>=6){outcome='ready';status('暂时没有新微博，本轮采集已结束。可继续采集或导出已有内容。');break}
         await send('WOB_SCROLL');await sleep(2500+Math.random()*700);
       }
-    }catch(e){status(`已暂停：${e.message}`)}finally{running=false;if($('status').textContent.startsWith('正在暂停'))status('进度已保存，可以继续采集，或导出已有记录。');await db.put('settings',{uid,status:'paused',diagnostics:latestScan,reason:$('status').textContent},`task:${uid}`)}
+    }catch(e){outcome='error';status(`采集已中断：${e.message}`)}finally{running=false;if($('status').textContent.startsWith('正在暂停'))status('进度已保存，可以继续采集，或导出已有记录。');await db.put('settings',{uid,status:'paused',diagnostics:latestScan,reason:$('status').textContent},`task:${uid}`)}
+    // 最后一次保存等待期间仍可能收到暂停操作，保存完成后同步最终提示。
+    if(panelUI.state.phase==='stopping'&&outcome!=='error'){outcome='paused';status('进度已保存，可以继续采集，或导出已有记录。')}
+    return outcome;
   });
 }
 function pause(){if(panelUI.state.phase!=='collecting')return;running=false;generation++;panelUI.dispatch({type:'STOPPING'});status('正在暂停，当前读取完成后保留进度。');activeControls();}
@@ -120,27 +162,29 @@ async function fetchMedia(url){
 }
 async function prepareMonthExport(batch,exportOptions,exportUid){
   assertExtensionContext();
-  const records=batch.posts,media=new Map(),failures=[];let size=0;
+  const combined=exportOptions.format==='pdf-combined',label=combined?'合并 PDF':batch.month==='unknown'?'未知日期':batch.month;
+  const records=combined?batch.flatMap(item=>item.posts):batch.posts,media=new Map(),failures=[];let size=0;
   // PDF 只呈现当前原创正文；Markdown 另外保留经过过滤的历史观察。
-  const urls=[...new Set(records.flatMap(p=>[...(p.images||[]),...(exportOptions.format==='pdf'?(p.emoticons||[]).map(e=>e.url):(p.versions||[]).flatMap(v=>v.images||[]))]))];
+  const urls=[...new Set(records.flatMap(p=>[...(p.images||[]),...(exportOptions.format!=='markdown'?(p.emoticons||[]).map(e=>e.url):(p.versions||[]).flatMap(v=>v.images||[]))]))];
   if(exportOptions.images){
     for(const [i,url] of urls.entries()){
       assertExtensionContext();
-      $('exportStatus').textContent=`${batch.month==='unknown'?'未知日期':batch.month} · 准备图片 ${i+1}/${urls.length}`;
+      $('exportStatus').textContent=`${label} · 准备图片 ${i+1}/${urls.length}`;
       try{
-        if(size>=64*1024*1024)throw new Error('本月图片达到 64 MiB 上限，请取消图片后导出正文');
+        if(size>=64*1024*1024)throw new Error('本次图片达到 64 MiB 上限，请取消图片或改用按月导出');
         let item=await db.get('media',url);
         if(item&&!usableMedia(item)){await db.remove('media',url);item=null}
         if(!item){item=await fetchMedia(url);try{await db.put('media',item)}catch{/* 缓存写入失败不影响本次导出。 */}}
         if(!usableMedia(item))throw new Error('图片缓存为空、格式无效或超限');
-        if(size+item.bytes.length>64*1024*1024)throw new Error('本月图片超过 64 MiB 上限');
+        if(size+item.bytes.length>64*1024*1024)throw new Error('本次图片超过 64 MiB 上限，请取消图片或改用按月导出');
         media.set(url,item);size+=item.bytes.length;
       }catch(error){failures.push({url,reason:error.message})}
     }
   }
   assertExtensionContext();
-  if(exportOptions.format==='pdf'){
-    const result=await buildMonthlyPdf(batch,{media,images:exportOptions.images,onProgress:message=>{assertExtensionContext();$('exportStatus').textContent=typeof message==='string'?message:`正在生成 ${batch.month} PDF…`}});
+  if(exportOptions.format!=='markdown'){
+    const build=combined?buildCombinedPdf:buildMonthlyPdf;
+    const result=await build(batch,{media,images:exportOptions.images,onProgress:message=>{assertExtensionContext();$('exportStatus').textContent=typeof message==='string'?message:combined?`正在生成合并 PDF${message.total?` · ${message.completed}/${message.total} 条`:''}…`:`正在生成 ${label} PDF…`}});
     for(const url of result.failedMediaUrls||[]){try{await db.remove('media',url)}catch{/* 下次导出仍可继续重试。 */}}
     // 表情可有多个候选地址，以最终 PDF 的实际缺失为准，避免备用地址失效阻止完成。
     const failedImageCount=result.failedImageCount+(result.failedUnicodeEmojiCount||0);
@@ -151,10 +195,11 @@ async function prepareMonthExport(batch,exportOptions,exportUid){
   }
   const task=await db.get('settings',`task:${exportUid}`);
   const report={version:4,uid:exportUid,exportUnit:'month',snapshotMonth:batch.month,exportedAt:new Date().toISOString(),scope:exportOptions,imagesRequested:exportOptions.images,failures,failedImages:failures.length,fromDate:exportOptions.from,toDate:exportOptions.to,mode:exportOptions.images?'text-and-images':'text-only',saved:records.length,historyComplete:false,stopReason:task?.reason||'仅导出本机已采集的原创记录；未验证历史完整性'};
-  const entries=buildArchiveEntries({posts:records,media,report});
-  const integrity=verifyMonthlyArchive(entries,batch.month,records.length);
+  const layout='month-directory',directory=batch.month==='unknown'?'未知日期':batch.month;
+  const entries=buildArchiveEntries({posts:records,media,report,layout});
+  const integrity=verifyMonthlyArchive(entries,batch.month,records.length,{layout});
   const historyKey=await db.get('settings',`history:last:${exportUid}`),historical=historyKey?await db.get('settings',historyKey):null;
-  if(historical){const coverage=historyCoverage(historical);coverage.note='最近一次年月任务的覆盖报告；不等于完整历史。导出已排除转发。';entries.push({name:'微博备份/history-coverage.json',data:JSON.stringify(coverage,null,2)})}
+  if(historical){const coverage=historyCoverage(historical);coverage.note='最近一次年月任务的覆盖报告；不等于完整历史。导出已排除转发。';entries.push({name:`${directory}/history-coverage.json`,data:JSON.stringify(coverage,null,2)})}
   const attachmentFailures=enrichMediaFailures(mediaFailureDetails(records,failures,{includeVersions:true}),failures,normalizeExportMediaURL);
   return {bytes:buildZip(entries),failedImageCount:Math.max(integrity.failedImageCount,failures.length),savedImageCount:integrity.savedImageCount,attachmentFailures,failureReason:[...new Set(attachmentFailures.map(item=>item.reason))].slice(0,3).join('；'),extension:'zip',mime:'application/zip'};
 }
@@ -173,9 +218,9 @@ async function restoreExportProgress(){
   if(version!==exportRestoreVersion||uid!==owner||month!==$('batch').value||JSON.stringify(opts)!==JSON.stringify(options())||incremental!==$('incremental').checked||panelUI.state.step!==4||isWizardBusy(panelUI.state)||job?.confirmed||!matchesExportJob(job,owner,opts,batches))return;
   const generated=generatedExportMonths(job),ready=[...generated.values()].filter(item=>!item.failedImageCount).length;
   renderExportFailures(job);
-  renderExportProgress({total:batches.length,generated:generated.size,ready,completed:0,failedMonths:job.failures.length,phase:job.failures.length?'partial':'preparing'});
+  renderExportProgress({total:batches.length,generated:generated.size,ready,completed:0,failedMonths:job.failures.length,phase:job.failures.length?'partial':'preparing',combined:opts.format==='pdf-combined'});
   $('export').dataset.resume='true';
-  $('exportStatus').textContent=`已找到上次导出任务，保留 ${ready} / ${batches.length} 个月的完整生成结果。点击“继续导出”后会检查并复用，继续处理未完成月份。`;
+  $('exportStatus').textContent=opts.format==='pdf-combined'?`已找到上次合并导出任务。${ready===batches.length?'完整 PDF 已生成，继续时会检查并复用。':'点击“继续导出”重新生成所选月份的完整 PDF。'}`:`已找到上次导出任务，保留 ${ready} / ${batches.length} 个月的完整生成结果。点击“继续导出”后会检查并复用，继续处理未完成月份。`;
   panelUI.render();
 }
 function renderExportProgress(progress){
@@ -192,7 +237,7 @@ function renderExportProgress(progress){
   $('exportProgress').setAttribute('aria-valuetext',$('exportProgressLabel').textContent);
   const month=progress.currentMonth==='unknown'?'未知日期':progress.currentMonth;
   const reuseNote=progress.reused?`已复用 ${progress.reused} 个月。`:'';
-  $('exportProgressDetail').textContent=reuseNote+(packing?`正在合成一个 ZIP${progress.totalBytes?` · ${Math.floor(packedRatio*100)}%`:''}…`:
+  $('exportProgressDetail').textContent=progress.combined?(complete?'所选月份已合成一份 PDF，请打开文件核对。':downloading?'正在下载合并 PDF，请保留本页…':progress.phase==='partial'?'合并 PDF 尚未完整生成，请重试。':progress.reused?'已复用完整的合并 PDF…':'正在将所选月份生成一份 PDF…'):reuseNote+(packing?`正在合成一个 ZIP${progress.totalBytes?` · ${Math.floor(packedRatio*100)}%`:''}…`:
     downloading?'正在下载最终文件，请保留本页…':complete?'所有月份均已保存，请打开文件核对。':progress.phase==='partial'?'完整月份的生成结果已保留，只需重试未完成内容。':
     month?`正在生成 ${month} 的文件…`:'正在检查已有生成结果…');
 }
@@ -225,6 +270,7 @@ async function doExport(){
     job=reuse?previous:createExportJob(exportUid,exportOptions,batches);
     await runExportJob({job,batches,options:exportOptions},{
       prepareMonth:batch=>prepareMonthExport(batch,exportOptions,exportUid),
+      prepareCombined:selection=>prepareMonthExport(selection,exportOptions,exportUid),
       downloadFile:downloadExport,downloadState:exportDownloadState,
       saveJob:value=>db.put('settings',value,jobKey),assertContext:assertExtensionContext,sleep,
       createObjectURL:blob=>URL.createObjectURL(blob),revokeObjectURL:url=>URL.revokeObjectURL(url),
@@ -232,21 +278,22 @@ async function doExport(){
     });
     const completed=completedExportMonths(job),snapshots=[...completed.values()],hasFailures=completed.size!==batches.length;
     const downloadIds=[...new Set(snapshots.map(item=>item.downloadId))];
-    const label=batches.length>1?`${batches.length} 份月度${exportOptions.format==='pdf'?' PDF':'笔记'}`:batches[0].month;
+    const combined=exportOptions.format==='pdf-combined';
+    const label=combined?`${batches.length} 个月 · 1 份 PDF`:batches.length>1?`${batches.length} 份月度${exportOptions.format==='pdf'?' PDF':'笔记'}`:batches[0].month;
     pendingExport={uid:exportUid,month:label,ledgerKey:monthLedgerKey(exportUid,exportOptions),batches:snapshots.map(({month,revision})=>({month,revision})),downloadIds,downloadId:downloadIds[0],hasFailures,jobKey,jobStamp:job.stamp};
     $('export').dataset.resume=String(hasFailures);
     panelUI.dispatch({type:'DOWNLOAD',canConfirm:!hasFailures});
     renderExportFailures(job);
     const failed=job.failures?.slice(0,3).map(item=>`${item.month}：${item.reason}`).join('\n');
-    $('exportStatus').textContent=hasFailures?`部分月份或附件未能完成，完整月份的生成结果已保留。点击“重试未完成月份”可继续。\n${failed||''}`:
-      batches.length>1?`已下载一个 ZIP，包含 ${batches.length} 个月的独立文件。请解压核对后确认。`:'文件已下载，请打开核对后确认。';
+    $('exportStatus').textContent=hasFailures?(combined?`合并 PDF 的部分内容或附件未能完成，不能确认成功。点击“重新生成合并 PDF”重试。\n${failed||''}`:`部分月份或附件未能完成，完整月份的生成结果已保留。点击“重试未完成月份”可继续。\n${failed||''}`):
+      combined?`已下载一个 PDF，包含所选 ${batches.length} 个月的原创。请打开核对后确认。`:exportOptions.format==='markdown'?`已下载一个 ZIP，内含 ${batches.length} 个月份目录，笔记和图片可直接打开。请解压核对后确认。`:batches.length>1?`已下载一个 ZIP，包含 ${batches.length} 个月的独立文件。请解压核对后确认。`:'文件已下载，请打开核对后确认。';
     });
   }catch(error){
     let normalized=normalizeExtensionError(error);
     if(job){
       renderExportFailures(job);
       const count=[...generatedExportMonths(job).values()].filter(item=>!item.failedImageCount).length;$('export').dataset.resume='true';
-      if(normalized.code!=='EXTENSION_CONTEXT_INVALIDATED')normalized=new Error(`${normalized.message}\n已保留 ${count} / ${job.plan.length} 个月的完整生成结果。可点击“继续导出”重试。`);
+      if(normalized.code!=='EXTENSION_CONTEXT_INVALIDATED')normalized=new Error(`${normalized.message}\n${exportOptions.format==='pdf-combined'?(count===job.plan.length?'完整的合并 PDF 已保留。':'合并 PDF 尚未完整生成。'):`已保留 ${count} / ${job.plan.length} 个月的完整生成结果。`}可点击“继续导出”重试。`);
     }
     panelUI.dispatch({type:'EXPORT_FAILED'});$('exportStatus').textContent=normalized.message;throw normalized;
   }finally{exporting=false;activeControls()}
@@ -263,9 +310,7 @@ async function confirmExport(){
     }
     if(pendingExport.uid!==uid)throw new Error('账号已变化，请重新导出。');
     const key=pendingExport.ledgerKey||monthLedgerKey(uid),snapshots=pendingExport.batches||[pendingExport];
-    const ledger=await db.get('settings',key)||{};
-    for(const snapshot of snapshots)ledger[snapshot.month]=snapshot.revision;
-    await db.put('settings',ledger,key);
+    await db.mergeSetting(key,Object.fromEntries(snapshots.map(snapshot=>[snapshot.month,snapshot.revision])));
     if(pendingExport.jobKey){const job=await db.get('settings',pendingExport.jobKey);if(job?.stamp===pendingExport.jobStamp){await db.put('settings',{...job,confirmed:true},pendingExport.jobKey);try{await cleanupExportJob(job)}catch{/* 下载及记账已完成，临时文件清理失败不回退完成状态。 */}}}
     const month=pendingExport.month,exportedMonths=new Set(snapshots.map(snapshot=>snapshot.month));
     await refresh();
@@ -312,6 +357,7 @@ async function startHistory(){
         request:(kind,params)=>requestFromTab(sourceTabId,kind,params),
         normalize:(raw,owner)=>normalizeApiPost(raw,owner,htmlToText,htmlToEmoticons),toText:htmlToText,toEmoticons:htmlToEmoticons,
         shouldIncludePost:isOriginalPost,
+        saveExcludedPost:p=>savePostRecord(db,p,{onlyExisting:true}),
         savePost:p=>savePostRecord(db,p),
         saveTask:async task=>{await db.put('settings',task,historyTaskKey(task));await db.put('settings',historyTaskKey(task),`history:last:${ownerUid}`)},
         shouldPause:()=>!running||generation!==token,wait:sleep,
@@ -326,16 +372,17 @@ async function beginBackup(){
   if(mode==='history'){assertOwnAccount();createHistoryTask(uid,$('historyFrom').value,$('historyTo').value);}
   if(panelUI.dispatch({type:'PREPARE'}).phase!=='preparing')return;
   activeControls();status('正在连接微博…');
+  let outcome='error';
   try{
-    await connect();
+    if(await connect()===false)return;
     if(uid!==confirmedUid){panelUI.dispatch({type:'SETTLED'});panelUI.dispatch({type:'RESET'});throw new Error('微博页面的账号已切换，请重新确认账号后再备份。');}
     pendingExport=null;
     $('from').value=mode==='history'?$('historyFrom').value:'';
     $('to').value=mode==='history'?$('historyTo').value:'';
     await saveOptions();
-    if(mode==='history')await startHistory();else await start();
+    if(mode==='history'){await startHistory();outcome='paused'}else outcome=await start();
   }finally{
-    panelUI.dispatch({type:'SETTLED'});activeControls();
+    panelUI.dispatch({type:'SETTLED',outcome});activeControls();
     if(!panelUI.state.connected)panelUI.dispatch({type:'BACK'});
     await refresh();
   }
@@ -347,7 +394,7 @@ function openExport(){
 }
 function reportError(error){const normalized=normalizeExtensionError(error);if(panelUI.state.step===4){const output=$('exportStatus');output.textContent=normalized.message;output.scrollIntoView({block:'nearest'});}else status(normalized.message);console.error(normalized)}
 function on(id,fn){$(id).addEventListener('click',()=>{try{Promise.resolve(fn()).catch(reportError)}catch(error){reportError(error)}})}
-on('connect',async()=>{await connect();$('ownAccount').checked=false;await showHistory()});on('pause',pause);on('export',doExport);on('confirmExport',confirmExport);
+on('connect',async()=>{if(await connect()===false)return;$('ownAccount').checked=false;await showHistory()});on('pause',pause);on('export',doExport);on('confirmExport',confirmExport);
 on('historyDirectory',readDirectory);
 on('wizardNext',()=>{if(exporting)return;status('');panelUI.dispatch({type:'NEXT'})});
 on('wizardBack',()=>{status('');panelUI.dispatch({type:'BACK'})});
@@ -357,7 +404,7 @@ on('wizardReselect',()=>{status('');panelUI.dispatch({type:'RESELECT'})});
 on('wizardExportBack',()=>{pendingExport=null;status('');panelUI.dispatch({type:'BACK'})});
 on('wizardRestart',()=>{pendingExport=null;status('');panelUI.dispatch({type:'RESET'})});
 on('wizardAnother',()=>{const next=[...$('batch').options].find(option=>option.value&&option.value!==panelUI.state.month);if(next)$('batch').value=next.value;resetExportProgress();$('exportStatus').textContent='';panelUI.dispatch({type:'NEXT_MONTH'})});
-on('top',async()=>{if(!uid)await connect();await chrome.scripting.executeScript({target:{tabId,frameIds:[0]},func:()=>window.scrollTo({top:0,behavior:'instant'})});status('已回到顶部。点击开始检查新增；已有内容自动去重。')});
+on('top',async()=>{if(!uid&&await connect()===false)return;await chrome.scripting.executeScript({target:{tabId,frameIds:[0]},func:()=>window.scrollTo({top:0,behavior:'instant'})});status('已回到顶部。点击开始检查新增；已有内容自动去重。')});
 for(const id of ['format','from','to','images','scroll','incremental','batch'])$(id).addEventListener('change',()=>{pendingExport=null;resetExportProgress();panelUI.dispatch({type:'INVALIDATE_DOWNLOAD'});saveOptions().then(refresh).catch(reportError)});
 window.addEventListener('beforeunload',e=>{if(running||exporting){e.preventDefault();e.returnValue=''}});
 async function initialize() {
@@ -371,7 +418,7 @@ async function initialize() {
   }
   const opts = await db.get('settings', 'options');
   if (opts) {
-    $('format').value = opts.format==='markdown'?'markdown':'pdf';
+    $('format').value = ['pdf','pdf-combined','markdown'].includes(opts.format)?opts.format:'pdf';
     $('from').value = (opts.from || '').slice(0, 7);
     $('to').value = (opts.to || '').slice(0, 7);
     $('images').checked = opts.images !== false;
@@ -384,7 +431,7 @@ async function initialize() {
   let message = sourceError || '请从微博个人主页点击浏览器工具栏中的本扩展。';
   if (tabId) {
     try {
-      await connect();
+      if(await connect()===false)return;
       await showHistory();
       return;
     } catch (error) {
@@ -395,7 +442,7 @@ async function initialize() {
   if (target) {
     uid = target.uid;
     $('uid').value = uid;
-    panelUI.setAccount(uid,target.name,true);
+    panelUI.setAccount(uid,target.name,true,target.avatar);
     const task = await db.get('settings', `task:${uid}`);
     latestScan = task?.diagnostics;
     message += ' 已有的本机记录仍可导出。';

@@ -98,6 +98,18 @@ test('empty collection offers retry rather than an empty export', () => {
   assert.equal(state.phase, 'idle');
 });
 
+test('collection outcome requires an explicit successful round and clears for fresh scope or retry', () => {
+  const collecting = move(move(connectedScope(), 'PREPARE'), 'STARTED');
+  assert.equal(move(collecting, 'SETTLED').collectionOutcome, 'paused');
+  const ready = move(collecting, 'SETTLED', {outcome:'ready'});
+  assert.equal(ready.collectionOutcome, 'ready');
+  for (const type of ['PREPARE','RESELECT','RESET']) assert.equal(move(ready, type).collectionOutcome, '');
+  const stopping = move(collecting, 'STOPPING');
+  assert.equal(move(stopping, 'SETTLED', {outcome:'ready'}).collectionOutcome, 'paused');
+  assert.equal(move(stopping, 'SETTLED', {outcome:'error'}).collectionOutcome, 'error');
+  assert.equal(move(ready, 'SETTLED', {outcome:'error'}).collectionOutcome, 'ready', 'stale settlement cannot overwrite an idle result');
+});
+
 test('a lost live connection prevents a fresh collection even when data is saved', () => {
   const state = move(move(connectedScope(), 'SAVED', {count: 5}), 'CONNECTION', {connected: false});
   assertUnchanged(state, 'PREPARE');

@@ -11,6 +11,18 @@ function sink() {
   }};
 }
 function entry(name, data) { const blob = new Blob([data]); return {name, size: blob.size, open: async () => blob}; }
+function unreadableEntry(stage, error, cleanup = {}) {
+  const reader = {
+    async read() {if (stage === 'read') throw error; return {done: true};},
+    async cancel() {cleanup.cancelled = true;},
+    releaseLock() {cleanup.released = true;},
+  };
+  const file = {size: 0, stream() {
+    if (stage === 'stream') throw error;
+    return {getReader() {if (stage === 'getReader') throw error; return reader;}};
+  }};
+  return {name: '2026-11/month.md', size: 0, async open() {if (stage === 'open') throw error; return file;}};
+}
 
 test('UTF-8 filenames, ZIP descriptors and empty entries are valid and CRCs match', async () => {
   const output = sink(), entries = [entry('月度备份/2026-01.pdf', '中文内容 🎉'), entry('empty.txt', '')];
@@ -70,4 +82,86 @@ test('context cancellation aborts the source reader instead of continuing to wri
     assertContext() { if (++checks > 7) throw new Error('stale context'); },
   }), /stale context/);
   assert.equal(cancelled, true);
+});
+
+test('optional expected CRC32 is checked for notes, images and empty files', async () => {
+  const entries = [entry('中文.md', '中文正文'), entry('image.png', new Uint8Array([137, 80, 78, 71, 0, 255])), entry('empty.md', '')];
+  for (const item of entries) item.crc32 = crc32(new Uint8Array(await (await item.open()).arrayBuffer()));
+  const output = sink();
+  assert.equal((await writeStreamingZip(entries, output)).entries, 3);
+  const changed = {...entries[0], crc32: entries[0].crc32 ^ 1};
+  changed.crc32 >>>= 0;
+  const incomplete = sink();
+  await assert.rejects(writeStreamingZip([changed], incomplete), error => {
+    assert.equal(error.code, 'ZIP_SOURCE_CRC_MISMATCH'); assert.equal(error.entryName, changed.name);
+    return /CRC32 校验失败/.test(error.message);
+  });
+  assert.equal(incomplete.result().length, 30 + new TextEncoder().encode(changed.name).length + changed.size);
+});
+
+test('invalid expected CRC32 values fail preflight before opening or writing any member', async () => {
+  for (const expected of [-1, 0x100000000, 0.5, NaN, Infinity, '0', null, 1n]) {
+    let opened = false;
+    const output = sink(), item = {name: 'month.md', size: 0, crc32: expected, open() {opened = true; throw new Error('must not open');}};
+    await assert.rejects(writeStreamingZip([entry('first.md', 'valid'), item], output), /CRC32 无效/);
+    assert.equal(opened, false); assert.equal(output.chunks.length, 0);
+  }
+  // 无符号 32 位边界是合法的预期值；错误内容应在读取后作为 CRC 不匹配报告。
+  for (const expected of [0, 0xffffffff]) {
+    const item = {...entry('month.md', 'payload'), crc32: expected};
+    await assert.rejects(writeStreamingZip([item], sink()), error => error.code === 'ZIP_SOURCE_CRC_MISMATCH');
+  }
+});
+
+for (const stage of ['open', 'stream', 'getReader', 'read']) {
+  test(`unreadable source ${stage} failures identify the cached member and preserve their cause`, async () => {
+    const cause = new DOMException('The source file cannot be read.', 'NotReadableError'), cleanup = {};
+    const item = unreadableEntry(stage, cause, cleanup);
+    await assert.rejects(writeStreamingZip([item], sink()), error => {
+      assert.equal(error.code, 'ZIP_SOURCE_CHANGED'); assert.equal(error.entryName, item.name);
+      assert.equal(error.cause, cause); assert.match(error.message, /临时源不可读/);
+      return true;
+    });
+    if (stage === 'read') assert.deepEqual(cleanup, {cancelled: true, released: true});
+  });
+}
+
+test('source cancellation and extension invalidation errors retain their original identity', async () => {
+  const errors = [
+    Object.assign(new Error('扩展已失效'), {code: 'EXTENSION_CONTEXT_INVALIDATED'}),
+    new DOMException('The operation was aborted.', 'AbortError'),
+    Object.assign(new Error('cancelled'), {code: 'ABORT_ERR'}),
+    new Error('Extension context invalidated.'),
+  ];
+  for (const stage of ['open', 'stream', 'getReader', 'read']) for (const original of errors) {
+    await assert.rejects(writeStreamingZip([unreadableEntry(stage, original)], sink()), error => error === original);
+    assert.equal(original.entryName, undefined);
+  }
+});
+
+test('writer context failures retain their original identity before and during source reads', async () => {
+  for (const limit of [1, 4, 5, 6]) {
+    let checks = 0;
+    const original = new Error('stale context');
+    await assert.rejects(writeStreamingZip([entry('month.md', 'data')], sink(), {
+      assertContext() {if (++checks >= limit) throw original;},
+    }), error => error === original);
+    assert.equal(original.code, undefined); assert.equal(original.entryName, undefined);
+  }
+});
+
+test('target write failures including quota errors are not attributed to the source member', async () => {
+  for (const failAt of [1, 3]) for (const name of ['QuotaExceededError', 'NotReadableError']) {
+    const original = new DOMException('Cannot write target archive.', name); let writes = 0, cancelled = false;
+    const source = {size: 10, stream: () => new ReadableStream({
+      pull(controller) {controller.enqueue(new Uint8Array(10));},
+      cancel() {cancelled = true;},
+    })};
+    await assert.rejects(writeStreamingZip([{name: 'month.md', size: source.size, open: async () => source}], {
+      async write() {if (++writes === failAt) throw original;},
+    }), error => error === original);
+    assert.equal(original.entryName, undefined);
+    assert.notEqual(original.code, 'ZIP_SOURCE_CHANGED');
+    assert.equal(cancelled, failAt === 3);
+  }
 });

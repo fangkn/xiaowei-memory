@@ -20,6 +20,8 @@ for(const icons of [m.icons,m.action.default_icon]){
   }
 }
 for(const f of ['dashboard.js','browser-export.js','media-data.js','media-referrer.js','export-runner.js','export-files.js','zip-stream.js','zip-reader.js','content.js','archive.js','db.js','model.js','floating-panel.js','panel-ui.js','wizard-state.js','monthly-pdf.js','vendor/pdf-lib.esm.min.js','vendor/fontkit.esm.min.js','fonts/NotoSansSC-Regular.ttf'])if(!readFileSync(`${extension}/${f}`).length)throw new Error(`Missing ${f}`);
+if(m.action.default_popup!=='launcher.html')throw new Error('Toolbar must use the guided launcher');
+for(const file of ['launcher.html','launcher.js','launcher.css'])if(!readFileSync(`${extension}/${file}`).length)throw new Error(`Missing ${file}`);
 const html=readFileSync(`${extension}/dashboard.html`,'utf8');
 if(!html.includes(`<span class="version">v${m.version}</span>`))throw new Error('Dashboard version must match the manifest');
 const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(match=>match[1]);

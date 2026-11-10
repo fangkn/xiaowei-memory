@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>小微记忆</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="launcher.css">
+  <script src="launcher.js" defer></script>
+</head>
+<body class="launcher">
+  <header class="panel-header">
+    <div class="brand"><img class="brand-logo" src="icons/logo.svg" width="20" height="20" alt=""><span>小微记忆</span></div>
+    <button id="closeLauncher" class="icon-button close-button" type="button" aria-label="关闭提示" title="关闭">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+    </button>
+  </header>
+  <main class="launcher-content">
+    <div role="status" aria-live="polite" aria-atomic="true">
+      <h1 id="launcherTitle">正在打开小微记忆…</h1>
+      <p id="launcherDescription">正在连接当前微博页面。</p>
+    </div>
+    <div id="launcherActions" class="launcher-actions" hidden>
+      <button id="openWeibo" class="primary" type="button">打开微博</button>
+      <button id="retryOpen" type="button" hidden>重试打开</button>
+    </div>
+  </main>
+</body>
+</html>

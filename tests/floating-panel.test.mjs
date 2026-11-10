@@ -58,34 +58,6 @@ function backgroundHarness({ failInjection = false, failRelay = false } = {}) {
   return { calls, handlers, sender, message };
 }
 
-test('toolbar opens the floating panel in the clicked top frame without creating a tab', async () => {
-  const { handlers, calls } = backgroundHarness();
-  await handlers.action({ id: 42, url: profileURL });
-  assert.deepEqual(plain(calls.injections), [{ target: { tabId: 42, frameIds: [0] }, files: ['floating-panel.js'] }]);
-  assert.deepEqual(calls.tabs, []);
-  assert.equal(calls.badges.at(-1).text, '');
-});
-
-test('toolbar rejects unrelated origins, insecure URLs, credential URLs, ports and invalid tab IDs', async () => {
-  const { handlers, calls } = backgroundHarness();
-  for (const url of ['http://weibo.com/u/1000000001', 'https://weibo.com.evil.test/', 'https://evil.test/',
-    'https://user:password@weibo.com/', 'https://weibo.com:8443/', 'chrome://extensions/', 'https://m.weibo.cn/', undefined]) {
-    await handlers.action({ id: 42, url });
-    assert.equal(calls.badges.at(-1).text, '!');
-  }
-  for (const id of [undefined, NaN, 1.5, '42']) await handlers.action({ id, url: profileURL });
-  assert.equal(calls.injections.length, 0);
-  assert.equal(calls.tabs.length, 0);
-});
-
-test('injection failure is reported on the toolbar and never opens a fallback page', async () => {
-  const { handlers, calls } = backgroundHarness({ failInjection: true });
-  await handlers.action({ id: 42, url: profileURL });
-  assert.equal(calls.badges.at(-1).text, '!');
-  assert.match(calls.titles.at(-1).title, /unavailable/);
-  assert.equal(calls.tabs.length, 0);
-});
-
 test('panel context binds to the browser-provided tab and ignores a caller-supplied tab ID', async () => {
   const { message, calls } = backgroundHarness();
   assert.deepEqual((await message({ type: 'WOB_PANEL_CONTEXT', tabId: 999 })).response, { ok: true, tabId: 42 });

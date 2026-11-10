@@ -1,0 +1,7 @@
+body.launcher { width: 300px; background: var(--surface); }
+.launcher .panel-header { padding: 10px 14px; }
+.launcher-content { padding: 18px 16px 16px; }
+.launcher-content h1 { font-size: 17px; line-height: 1.45; }
+.launcher-content p { margin-top: 8px; color: var(--text); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.launcher-actions { display: flex; gap: 8px; margin-top: 16px; }
+.launcher-actions button { flex: 1; }

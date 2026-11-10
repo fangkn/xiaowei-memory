@@ -10,21 +10,6 @@ function isWeiboPage(value) {
   } catch { return false; }
 }
 
-// 面板只注入用户点击扩展时的微博标签页，不再打开新的管理标签页。
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!Number.isInteger(tab.id)) return;
-  try {
-    if (!isWeiboPage(tab.url)) throw new Error('请在微博个人主页点击扩展，打开悬浮备份面板。');
-    await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ['floating-panel.js'] });
-    await chrome.action.setBadgeText({ tabId: tab.id, text: '' });
-    await chrome.action.setTitle({ tabId: tab.id, title: '打开小微记忆悬浮面板' });
-  } catch (error) {
-    await chrome.action.setBadgeText({ tabId: tab.id, text: '!' });
-    await chrome.action.setTitle({ tabId: tab.id, title: error.message || '请刷新微博后重新打开备份面板。' });
-    console.error('无法打开小微记忆面板：', error);
-  }
-});
-
 // 导出兼容入口只接受扩展自己生成的文件，不提供任意网址下载或下载历史查询。
 function handleExportMessage(message, sendResponse) {
   const fail = error => sendResponse({ ok: false, error });
